@@ -1,0 +1,116 @@
+name: Dump Repo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build dump
+        run: |
+          OUTPUT="dump.txt"
+          {
+            echo "=== REPO DUMP ==="
+            echo "Generated: $(date -u)"
+            echo "Commit: $(git rev-parse --short HEAD)"
+            echo ""
+
+            echo "=== STRUCTURE ==="
+            find . -type d \
+              -not -path "./.git*" \
+              -not -path "./node_modules*" \
+              -not -path "./dist*" \
+              -not -path "./.wrangler*" \
+              -not -path "./.astro*" \
+              | sort
+            echo ""
+
+            echo "=== FILES ==="
+            find . -type f \
+              -not -path "./.git/*" \
+              -not -path "./node_modules/*" \
+              -not -path "./dist/*" \
+              -not -path "./.wrangler/*" \
+              -not -path "./.astro/*" \
+              -not -name "dump.txt" \
+              -not -name "package-lock.json" \
+              -not -name "*.log" \
+              -not -name ".DS_Store" \
+              -not -name "*.png" \
+              -not -name "*.jpg" \
+              -not -name "*.jpeg" \
+              -not -name "*.gif" \
+              -not -name "*.ico" \
+              -not -name "*.woff" \
+              -not -name "*.woff2" \
+              -not -name "*.ttf" \
+              -not -name "*.otf" \
+              -not -name "*.webp" \
+              -not -name "*.mp4" \
+              -not -name "*.pdf" \
+              -not -name "*.zip" \
+              -size -100k \
+              | sort
+            echo ""
+
+            echo "=== CONTENTS ==="
+            find . -type f \
+              -not -path "./.git/*" \
+              -not -path "./node_modules/*" \
+              -not -path "./dist/*" \
+              -not -path "./.wrangler/*" \
+              -not -path "./.astro/*" \
+              -not -name "dump.txt" \
+              -not -name "package-lock.json" \
+              -not -name "*.log" \
+              -not -name ".DS_Store" \
+              -not -name "*.png" \
+              -not -name "*.jpg" \
+              -not -name "*.jpeg" \
+              -not -name "*.gif" \
+              -not -name "*.ico" \
+              -not -name "*.woff" \
+              -not -name "*.woff2" \
+              -not -name "*.ttf" \
+              -not -name "*.otf" \
+              -not -name "*.webp" \
+              -not -name "*.mp4" \
+              -not -name "*.pdf" \
+              -not -name "*.zip" \
+              -size -100k \
+              | sort | while read -r file; do
+                echo "" >> "$OUTPUT"
+                echo "===== FILE: $file =====" >> "$OUTPUT"
+                sed -E \
+                  -e 's/[0-9]{8,10}:[A-Za-z0-9_-]{35}/***TELEGRAM_TOKEN***/g' \
+                  -e 's/(BOT_TOKEN|API_TOKEN|CLIENT_SECRET|API_KEY|PASSWORD|CLOUDFLARE_API_TOKEN)[[:space:]]*=[[:space:]]*["'"'"']?[^"'"'"'[:space:]]+/\1=***REDACTED***/g' \
+                  "$file" >> "$OUTPUT" 2>/dev/null || echo "[binary]" >> "$OUTPUT"
+                echo "" >> "$OUTPUT"
+                echo "===== END FILE =====" >> "$OUTPUT"
+              done
+
+            echo ""
+            echo "=== DUMP COMPLETE ==="
+          } > "$OUTPUT"
+
+          echo "Generated: $(wc -l < $OUTPUT) lines, $(du -h $OUTPUT | cut -f1)"
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dump.txt
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore: dump repo [skip ci]"
+            git push
+          fi
