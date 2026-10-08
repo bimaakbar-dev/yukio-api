@@ -25,17 +25,6 @@ function yamlString(s: string): string {
   return `"${cleaned.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
 function formatDate(
   year: number | null | undefined,
   month: number | null | undefined,
