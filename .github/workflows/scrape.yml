@@ -1,0 +1,21 @@
+name: Cron Scrape
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger scrape
+        run: |
+          echo "Trigger at: $(date -u)"
+          curl -f --max-time 300 \
+            --output response.json \
+            --write-out "\nHTTP %{http_code} - %{time_total}s\n" \
+            "https://yukio-api.bimaakbar.workers.dev/run"
+          echo "=== Response ==="
+          cat response.json
