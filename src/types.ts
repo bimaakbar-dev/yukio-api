@@ -9,7 +9,6 @@ export interface Env {
   YUKIO_DATA_BRANCH: string;
 
   BATCH_SIZE: string;
-  PER_ANIME_TIMEOUT_MS: string;
   INCREMENTAL: string;
   SCRAPE_TTL_DAYS: string;
 }
@@ -132,16 +131,6 @@ export interface ChainContext {
   malId: number | null;
   kitsuId: string | null;
   title: string;
-}
-
-export interface ScrapePayload {
-  slug: string;
-  markdown: string;
-  franchises: UnifiedRelation[];
-  characters: UnifiedCharacter[];
-  episodes: UnifiedEpisode[];
-  voiceActors: UnifiedVoiceActor[];
-  sourceUsed: string;
 }
 
 export interface FileToCommit {
