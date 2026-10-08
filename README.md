@@ -15,7 +15,7 @@ AniList/Shikimori/Kitsu, push ke repo yukio-data.
 
 ## Cara Kerja
 
-[text]
+```plaintext
 [ Cron tiap 10 menit ]
         │
         ▼
@@ -29,7 +29,7 @@ AniList/Shikimori/Kitsu, push ke repo yukio-data.
         │     ├─ Generate sinopsis (AI kalau perlu)
         │     └─ Push ke yukio-data
         └─ Log progress ke D1
-[]
+```
 
 Setelah semua anime selesai di-scrape, worker bisa dimatikan atau
 cron di-comment di wrangler.toml.
@@ -52,16 +52,15 @@ cron di-comment di wrangler.toml.
 
 ### 1. Install
 
-[bash]
+```bash
 npm install
-[]
+```
 
 ### 2. Set secrets
 
-[bash]
+```bash
 npx wrangler secret put GH_TOKEN       # fine-grained PAT, akses yukio-data
-npx wrangler secret put ADMIN_SECRET   # string random (opsional)
-[]
+```
 
 ### 3. Update wrangler.toml
 
@@ -69,33 +68,32 @@ Isi database_id dengan UUID D1 kamu.
 
 ### 4. Apply migration
 
-[bash]
+```bash
 npm run db:init
-[]
+```
 
 ### 5. Deploy
 
-[bash]
+```bash
 npm run deploy
-[]
+```
 
 ---
 
 ## Cek Progress
 
-[bash]
+```bash
 curl https://yukio-api.bimaakbar.workers.dev/stats
 curl "https://yukio-api.bimaakbar.workers.dev/state?slug=naruto"
-[]
+```
 
 ---
 
 ## Manual Trigger
 
-[bash]
-curl -X POST "https://yukio-api.bimaakbar.workers.dev/admin/scrape?limit=5" \
-  -H "X-Admin-Secret: <secret>"
-[]
+```bash
+curl -X POST "https://yukio-api.bimaakbar.workers.dev/admin/scrape?limit=5"
+```
 
 ---
 
@@ -107,10 +105,10 @@ Kalau semua anime sudah di-scrape:
 
 Edit wrangler.toml:
 
-[toml]
+```toml
 [triggers]
 # crons = ["*/10 * * * *"]
-[]
+```
 
 Deploy ulang.
 
