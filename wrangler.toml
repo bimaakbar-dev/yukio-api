@@ -9,14 +9,28 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "yukio-ratings-db"
 database_id = "84b22e1e-29ae-437c-b7ec-63337c7387d1"
-# preview_database_id = "REPLACE_WITH_YOUR_PREVIEW_DATABASE_ID"
 migrations_dir = "migrations"
+
+[ai]
+binding = "AI"
 
 [observability]
 enabled = true
 
+[triggers]
+crons = ["*/10 * * * *"]
+
 [vars]
-ALLOWED_ORIGINS = "https://yukionime.pages.dev,http://localhost:4321"
+YUKIONIME_API = "https://yukionime.pages.dev/api/v1/anime.json"
+YUKIO_DATA_REPO = "bimaakbar-dev/yukio-data"
+YUKIO_DATA_BRANCH = "main"
+
+BATCH_SIZE = "8"
+
+PER_ANIME_TIMEOUT_MS = "20000"
+
+INCREMENTAL = "true"
+SCRAPE_TTL_DAYS = "30"
 
 [dev]
 port = 8787
