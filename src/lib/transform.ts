@@ -12,7 +12,7 @@ const EP_CHUNK_SIZE = 12;
 const MAX_ACTORS_PER_FILE = 500;
 
 function yamlString(s: string): string {
-  const cleaned = s.replace(/\n/g, ' ').trim();
+  const cleaned = String(s ?? '').replace(/\n/g, ' ').trim();
   const needsQuote =
     /[:#&*!|>'"%@`{}\[\],]/.test(cleaned) ||
     cleaned === '' ||
@@ -22,7 +22,7 @@ function yamlString(s: string): string {
 }
 
 function slugify(s: string): string {
-  return s
+  return String(s ?? '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
