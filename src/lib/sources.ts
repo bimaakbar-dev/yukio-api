@@ -1,5 +1,6 @@
 import type {
   AniListMedia,
+  AniListTopItem,
   UnifiedVoiceActor,
   UnifiedCharacter,
   UnifiedEpisode,
@@ -10,11 +11,9 @@ const ANILIST_PROXY = 'https://yukio-db.val.run/';
 const SHIKIMORI_BASE = 'https://shikimori.one/api/animes';
 const KITSU_BASE = 'https://kitsu.io/api/edge/anime';
 
-const TIMEOUT_MS = 8000;
-const MAX_CHARS = 100;
-const MAX_EPISODES = 700;
+const TIMEOUT_MS = 12000;
+const PAGE_SIZE = 50;
 const KITSU_PAGE_LIMIT = 20;
-const MAX_PAGES = 35;
 const PARALLEL_BATCH = 5;
 
 async function fetchTimeout(
@@ -42,8 +41,77 @@ function slugify(s: string): string {
     .replace(/^-|-$/g, '');
 }
 
+export { slugify };
+
 /* ============================================================
-   ANILIST
+   ANILIST GRAPHQL - via proxy Val Town
+   ============================================================ */
+
+async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
+  try {
+    const res = await fetchTimeout(ANILIST_PROXY, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as {
+      data?: T;
+      errors?: { message: string }[];
+    };
+
+    if (json.errors?.length) return null;
+    return json.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* ============================================================
+   ANILIST - TOP LIST (untuk queue)
+   ============================================================ */
+
+const SORT_MAP: Record<string, string> = {
+  popular: 'POPULARITY_DESC',
+  rating: 'SCORE_DESC',
+  trending: 'TRENDING_DESC',
+  id: 'ID',
+};
+
+export async function fetchAniListTop(
+  page: number,
+  sortKey: string
+): Promise<AniListTopItem[]> {
+  const sort = SORT_MAP[sortKey] ?? 'POPULARITY_DESC';
+
+  const query = `
+    query ($page: Int) {
+      Page(page: $page, perPage: ${PAGE_SIZE}) {
+        media(type: ANIME, sort: [${sort}], isAdult: false) {
+          id
+          idMal
+          title { romaji english native }
+          format
+        }
+      }
+    }
+  `;
+
+  const data = await gql<{
+    Page?: { media?: AniListTopItem[] };
+  }>(query, { page });
+
+  return data?.Page?.media ?? [];
+}
+
+/* ============================================================
+   ANILIST - METADATA (by ID)
    ============================================================ */
 
 interface AniListMediaRaw {
@@ -67,32 +135,6 @@ interface AniListMediaRaw {
   trailer: { id: string; site: string } | null;
   source: string | null;
 }
-
-const METADATA_QUERY = `
-  query ($search: String) {
-    Media(search: $search, type: ANIME) {
-      id
-      idMal
-      title { romaji english native }
-      coverImage { extraLarge large }
-      bannerImage
-      description
-      genres
-      studios(isMain: true) { nodes { name } }
-      episodes
-      duration
-      status
-      format
-      season
-      seasonYear
-      startDate { year month day }
-      endDate { year month day }
-      averageScore
-      trailer { id site }
-      source
-    }
-  }
-`;
 
 function mapAniListFormat(raw: string | null | undefined): string {
   if (!raw) return 'TV';
@@ -150,86 +192,89 @@ function mapAniListSource(raw: string | null | undefined): string | null {
   return map[lower] ?? null;
 }
 
-export async function searchAniList(
-  query: string
-): Promise<AniListMedia | null> {
-  try {
-    const res = await fetchTimeout(ANILIST_PROXY, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'yukio-api/2.0',
-      },
-      body: JSON.stringify({
-        query: METADATA_QUERY,
-        variables: { search: query },
-      }),
-    });
-
-    if (!res.ok) return null;
-
-    const json = (await res.json()) as {
-      data?: { Media?: AniListMediaRaw };
-      errors?: { message: string }[];
-    };
-
-    if (json.errors?.length) return null;
-    const m = json.data?.Media;
-    if (!m) return null;
-
-    let trailer: string | null = null;
-    if (m.trailer?.site === 'youtube' && m.trailer.id) {
-      trailer = m.trailer.id;
+export async function fetchAniListById(id: number): Promise<AniListMedia | null> {
+  const query = `
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        id
+        idMal
+        title { romaji english native }
+        coverImage { extraLarge large }
+        bannerImage
+        description
+        genres
+        studios(isMain: true) { nodes { name } }
+        episodes
+        duration
+        status
+        format
+        season
+        seasonYear
+        startDate { year month day }
+        endDate { year month day }
+        averageScore
+        trailer { id site }
+        source
+      }
     }
+  `;
 
-    const studios = (m.studios?.nodes ?? [])
-      .map((s) => ({ name: s.name }))
-      .slice(0, 3);
+  const data = await gql<{ Media?: AniListMediaRaw }>(query, { id });
+  const m = data?.Media;
+  if (!m) return null;
 
-    return {
-      id: m.id,
-      title: {
-        romaji: m.title.romaji ?? 'Unknown',
-        english: m.title.english ?? null,
-        native: m.title.native ?? null,
-      },
-      coverImage: {
-        extraLarge: m.coverImage.extraLarge ?? '',
-        large: m.coverImage.large ?? '',
-      },
-      description: m.description ?? null,
-      format: mapAniListFormat(m.format),
-      status: mapAniListStatus(m.status),
-      seasonYear: m.seasonYear ?? null,
-      episodes: m.episodes ?? null,
-      genres: Array.isArray(m.genres) ? m.genres : [],
-      averageScore: m.averageScore ?? null,
-      studios: { nodes: studios },
-      startDate: {
-        year: m.startDate?.year ?? null,
-        month: m.startDate?.month ?? null,
-        day: m.startDate?.day ?? null,
-      },
-      duration: m.duration ?? null,
-      rating: null,
-      endDate: m.endDate?.year
-        ? {
-            year: m.endDate.year,
-            month: m.endDate.month ?? null,
-            day: m.endDate.day ?? null,
-          }
-        : null,
-      banner: m.bannerImage ?? null,
-      trailer,
-      myanimelistId: m.idMal ?? null,
-      source: mapAniListSource(m.source),
-    };
-  } catch (err) {
-    console.warn('[Sources/AniList] search failed:', err);
-    return null;
+  let trailer: string | null = null;
+  if (m.trailer?.site === 'youtube' && m.trailer.id) {
+    trailer = m.trailer.id;
   }
+
+  const studios = (m.studios?.nodes ?? [])
+    .map((s) => ({ name: s.name }))
+    .slice(0, 3);
+
+  return {
+    id: m.id,
+    title: {
+      romaji: m.title.romaji ?? 'Unknown',
+      english: m.title.english ?? null,
+      native: m.title.native ?? null,
+    },
+    coverImage: {
+      extraLarge: m.coverImage.extraLarge ?? '',
+      large: m.coverImage.large ?? '',
+    },
+    description: m.description ?? null,
+    format: mapAniListFormat(m.format),
+    status: mapAniListStatus(m.status),
+    seasonYear: m.seasonYear ?? null,
+    episodes: m.episodes ?? null,
+    genres: Array.isArray(m.genres) ? m.genres : [],
+    averageScore: m.averageScore ?? null,
+    studios: { nodes: studios },
+    startDate: {
+      year: m.startDate?.year ?? null,
+      month: m.startDate?.month ?? null,
+      day: m.startDate?.day ?? null,
+    },
+    duration: m.duration ?? null,
+    rating: null,
+    endDate: m.endDate?.year
+      ? {
+          year: m.endDate.year,
+          month: m.endDate.month ?? null,
+          day: m.endDate.day ?? null,
+        }
+      : null,
+    banner: m.bannerImage ?? null,
+    trailer,
+    myanimelistId: m.idMal ?? null,
+    source: mapAniListSource(m.source),
+  };
 }
+
+/* ============================================================
+   ANILIST - CHARACTERS
+   ============================================================ */
 
 interface AniListCharEdge {
   role: string;
@@ -246,83 +291,64 @@ interface AniListCharEdge {
   }[];
 }
 
-const CHARS_QUERY = `
-  query ($idMal: Int, $page: Int) {
-    Media(idMal: $idMal, type: ANIME) {
-      characters(page: $page, perPage: 25, sort: [ROLE, RELEVANCE]) {
-        pageInfo { hasNextPage currentPage lastPage total }
-        edges {
-          role
-          node {
-            id
-            name { full native }
-            image { large }
-          }
-          voiceActors(language: JAPANESE) {
-            id
-            name { full native }
-            languageV2
-            image { large }
-          }
-        }
-      }
-    }
-  }
-`;
-
 async function fetchCharsPage(
   idMal: number,
   page: number
 ): Promise<{ edges: AniListCharEdge[]; lastPage: number } | null> {
-  try {
-    const res = await fetchTimeout(ANILIST_PROXY, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'yukio-api/2.0',
-      },
-      body: JSON.stringify({
-        query: CHARS_QUERY,
-        variables: { idMal, page },
-      }),
-    });
+  const query = `
+    query ($idMal: Int, $page: Int) {
+      Media(idMal: $idMal, type: ANIME) {
+        characters(page: $page, perPage: 25, sort: [ROLE, RELEVANCE]) {
+          pageInfo { hasNextPage currentPage lastPage total }
+          edges {
+            role
+            node {
+              id
+              name { full native }
+              image { large }
+            }
+            voiceActors(language: JAPANESE) {
+              id
+              name { full native }
+              languageV2
+              image { large }
+            }
+          }
+        }
+      }
+    }
+  `;
 
-    if (!res.ok) return null;
-
-    const json = (await res.json()) as {
-      data?: {
-        Media?: {
-          characters?: {
-            pageInfo: { lastPage: number };
-            edges: AniListCharEdge[];
-          };
-        };
+  const data = await gql<{
+    Media?: {
+      characters?: {
+        pageInfo: { lastPage: number };
+        edges: AniListCharEdge[];
       };
-      errors?: { message: string }[];
     };
+  }>(query, { idMal, page });
 
-    if (json.errors?.length) return null;
-    const chars = json.data?.Media?.characters;
-    if (!chars) return null;
+  const chars = data?.Media?.characters;
+  if (!chars) return null;
 
-    return {
-      edges: chars.edges ?? [],
-      lastPage: chars.pageInfo?.lastPage ?? 1,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    edges: chars.edges ?? [],
+    lastPage: chars.pageInfo?.lastPage ?? 1,
+  };
 }
 
-export async function fetchCharactersFromAniList(idMal: number): Promise<{
+export async function fetchCharactersFromAniList(
+  idMal: number,
+  maxChars: number
+): Promise<{
   characters: UnifiedCharacter[];
   voiceActors: UnifiedVoiceActor[];
 } | null> {
   const first = await fetchCharsPage(idMal, 1);
   if (!first) return null;
 
-  const lastPage = Math.min(first.lastPage, MAX_PAGES);
+  const maxPages = Math.ceil(maxChars / 25) + 1;
+  const lastPage = Math.min(first.lastPage, maxPages);
   const allEdges: AniListCharEdge[] = [...first.edges];
 
   if (lastPage > 1) {
@@ -386,7 +412,7 @@ export async function fetchCharactersFromAniList(idMal: number): Promise<{
       voiceActors: vaSlugs,
     });
 
-    if (characters.length >= MAX_CHARS) break;
+    if (characters.length >= maxChars) break;
   }
 
   const voiceActors = [...vaMap.values()].sort((a, b) =>
@@ -397,7 +423,7 @@ export async function fetchCharactersFromAniList(idMal: number): Promise<{
 }
 
 /* ============================================================
-   SHIKIMORI
+   SHIKIMORI - RELATIONS
    ============================================================ */
 
 interface ShikimoriRelated {
@@ -427,15 +453,12 @@ export async function fetchRelationsFromShikimori(
   malId: number
 ): Promise<UnifiedRelation[] | null> {
   try {
-    const res = await fetchTimeout(
-      `${SHIKIMORI_BASE}/${malId}/related`,
-      {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'yukio-api/2.0',
-        },
-      }
-    );
+    const res = await fetchTimeout(`${SHIKIMORI_BASE}/${malId}/related`, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+    });
 
     if (!res.ok) return null;
 
@@ -462,52 +485,17 @@ export async function fetchRelationsFromShikimori(
     }
 
     return out.length > 0 ? out : null;
-  } catch (err) {
-    console.warn('[Sources/Shikimori] relations failed:', err);
+  } catch {
     return null;
   }
 }
 
 /* ============================================================
-   KITSU
+   KITSU - EPISODES
    ============================================================ */
 
 interface KitsuAnimeRaw {
   id: string;
-  attributes?: {
-    canonicalTitle?: string;
-    titles?: { en?: string; en_jp?: string; ja_jp?: string };
-    startDate?: string | null;
-    endDate?: string | null;
-    posterImage?: { large?: string; original?: string };
-    coverImage?: { large?: string; original?: string } | null;
-  };
-}
-
-export async function searchKitsuId(title: string): Promise<string | null> {
-  try {
-    const params = new URLSearchParams();
-    params.set('filter[text]', title);
-    params.set('page[limit]', '1');
-
-    const res = await fetchTimeout(
-      `${KITSU_BASE}?${params.toString()}`,
-      {
-        headers: {
-          Accept: 'application/vnd.api+json',
-          'Content-Type': 'application/vnd.api+json',
-          'User-Agent': 'yukio-api/2.0',
-        },
-      }
-    );
-
-    if (!res.ok) return null;
-
-    const json = (await res.json()) as { data?: KitsuAnimeRaw[] };
-    return json.data?.[0]?.id ?? null;
-  } catch {
-    return null;
-  }
 }
 
 interface KitsuEpisodeItem {
@@ -519,6 +507,29 @@ interface KitsuEpisodeItem {
     airdate?: string | null;
     length?: number | null;
   };
+}
+
+export async function searchKitsuId(title: string): Promise<string | null> {
+  try {
+    const params = new URLSearchParams();
+    params.set('filter[text]', title);
+    params.set('page[limit]', '1');
+
+    const res = await fetchTimeout(`${KITSU_BASE}?${params.toString()}`, {
+      headers: {
+        Accept: 'application/vnd.api+json',
+        'Content-Type': 'application/vnd.api+json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+    });
+
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as { data?: KitsuAnimeRaw[] };
+    return json.data?.[0]?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchEpisodesPage(
@@ -552,10 +563,11 @@ async function fetchEpisodesPage(
 }
 
 export async function fetchEpisodesFromKitsu(
-  kitsuId: string
+  kitsuId: string,
+  maxEpisodes: number
 ): Promise<UnifiedEpisode[] | null> {
   const allEpisodes: KitsuEpisodeItem[] = [];
-  const maxPages = Math.ceil(MAX_EPISODES / KITSU_PAGE_LIMIT);
+  const maxPages = Math.ceil(maxEpisodes / KITSU_PAGE_LIMIT);
 
   for (
     let batchStart = 0;
@@ -587,7 +599,7 @@ export async function fetchEpisodesFromKitsu(
     }
 
     if (batchHadEnd) break;
-    if (allEpisodes.length >= MAX_EPISODES) break;
+    if (allEpisodes.length >= maxEpisodes) break;
   }
 
   if (allEpisodes.length === 0) return null;
@@ -618,67 +630,9 @@ export async function fetchEpisodesFromKitsu(
       ...(duration ? { duration } : {}),
     });
 
-    if (out.length >= MAX_EPISODES) break;
+    if (out.length >= maxEpisodes) break;
   }
 
   out.sort((a, b) => a.number - b.number);
   return out;
-}
-
-/* ============================================================
-   CHAIN: SEARCH (AniList → Shikimori → Kitsu)
-   ============================================================ */
-
-export interface ChainSearchResult {
-  media: AniListMedia;
-  malId: number | null;
-  kitsuId: string | null;
-  source: string;
-}
-
-export async function chainSearch(
-  query: string
-): Promise<ChainSearchResult> {
-  const [aniListR, kitsuIdR] = await Promise.allSettled([
-    searchAniList(query),
-    searchKitsuId(query),
-  ]);
-
-  const aniList = aniListR.status === 'fulfilled' ? aniListR.value : null;
-  const kitsuId = kitsuIdR.status === 'fulfilled' ? kitsuIdR.value : null;
-
-  if (aniList) {
-    return {
-      media: aniList,
-      malId: aniList.myanimelistId ?? null,
-      kitsuId,
-      source: kitsuId ? 'AniList + Kitsu' : 'AniList',
-    };
-  }
-
-  if (kitsuId) {
-    return {
-      media: {
-        id: 0,
-        title: { romaji: query, english: null, native: null },
-        coverImage: { extraLarge: '', large: '' },
-        description: null,
-        format: 'TV',
-        status: 'FINISHED',
-        seasonYear: null,
-        episodes: null,
-        genres: [],
-        averageScore: null,
-        studios: { nodes: [] },
-        startDate: { year: null, month: null, day: null },
-      },
-      malId: null,
-      kitsuId,
-      source: 'Kitsu only',
-    };
-  }
-
-  throw new Error(
-    `Semua sumber gagal untuk query: "${query}" — AniList & Kitsu tidak mengembalikan hasil`
-  );
 }
