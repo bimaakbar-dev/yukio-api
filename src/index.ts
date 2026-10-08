@@ -1,6 +1,10 @@
 import type { Env } from './types';
 import { runScrapeCron } from './handlers/cron';
-import { getQueueStats, resetPermanentFailed, getFailedItems } from './lib/state';
+import {
+  getQueueStats,
+  resetPermanentFailed,
+  getFailedItems,
+} from './lib/state';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -20,6 +24,15 @@ export default {
       return Response.json(stats);
     }
 
+    if (url.pathname === '/errors') {
+      const limit = Math.min(
+        parseInt(url.searchParams.get('limit') ?? '50', 10),
+        200
+      );
+      const items = await getFailedItems(env, limit);
+      return Response.json({ total: items.length, items });
+    }
+
     if (url.pathname === '/run') {
       try {
         const result = await runScrapeCron(env);
@@ -31,15 +44,6 @@ export default {
         );
       }
     }
-if (url.pathname === '/errors') {
-  const limit = Math.min(
-    parseInt(url.searchParams.get('limit') ?? '50', 10),
-    200
-  );
-  const items = await getFailedItems(env, limit);
-  return Response.json({ total: items.length, items });
-}
-
 
     if (url.pathname === '/reset-failed') {
       const reset = await resetPermanentFailed(env);
