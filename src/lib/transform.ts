@@ -11,10 +11,6 @@ const CHAR_CHUNK_SIZE = 50;
 const EP_CHUNK_SIZE = 12;
 const MAX_ACTORS_PER_FILE = 500;
 
-/* ============================================================
-   HELPERS
-   ============================================================ */
-
 function yamlString(s: string): string {
   const cleaned = s.replace(/\n/g, ' ').trim();
   const needsQuote =
@@ -23,6 +19,17 @@ function yamlString(s: string): string {
     /^\d/.test(cleaned);
   if (!needsQuote) return cleaned;
   return `"${cleaned.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 function formatDate(
@@ -45,7 +52,6 @@ function guessSeason(month: number | null): string | null {
   return null;
 }
 
-
 const FORMAT_MAP: Record<string, string> = {
   TV: 'TV',
   TV_SHORT: 'TV',
@@ -64,10 +70,6 @@ const STATUS_MAP: Record<string, string> = {
   CANCELLED: 'cancelled',
   HIATUS: 'hiatus',
 };
-
-/* ============================================================
-   MARKDOWN BUILDER
-   ============================================================ */
 
 export interface MarkdownInput {
   media: AniListMedia;
@@ -213,10 +215,6 @@ export function buildMarkdown(input: MarkdownInput): string {
   return lines.join('\n');
 }
 
-/* ============================================================
-   JSON CHUNK HELPERS
-   ============================================================ */
-
 function chunkArray<T>(arr: T[], size: number): T[][] {
   if (arr.length === 0) return [];
   const chunks: T[][] = [];
@@ -225,10 +223,6 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   }
   return chunks;
 }
-
-/* ============================================================
-   CHARACTER FILES
-   ============================================================ */
 
 export function buildCharacterFiles(
   slug: string,
@@ -259,10 +253,6 @@ export function buildCharacterFiles(
   return files;
 }
 
-/* ============================================================
-   EPISODE FILES
-   ============================================================ */
-
 export function buildEpisodeFiles(
   slug: string,
   episodes: UnifiedEpisode[]
@@ -287,10 +277,6 @@ export function buildEpisodeFiles(
   return files;
 }
 
-/* ============================================================
-   FRANCHISE FILE
-   ============================================================ */
-
 export function buildFranchiseFile(
   slug: string,
   relations: UnifiedRelation[]
@@ -302,10 +288,6 @@ export function buildFranchiseFile(
     content: JSON.stringify(relations, null, 2) + '\n',
   };
 }
-
-/* ============================================================
-   ACTOR FILES (grouped by first letter)
-   ============================================================ */
 
 export function buildActorFiles(
   voiceActors: UnifiedVoiceActor[]
@@ -345,10 +327,6 @@ export function buildActorFiles(
 
   return files;
 }
-
-/* ============================================================
-   COMBINE — build all files for 1 anime
-   ============================================================ */
 
 export interface BuildAllInput {
   slug: string;
