@@ -1,4 +1,4 @@
-name: Fix Scraper TS Errors
+name: Fix Cron Limit
 
 on:
   workflow_dispatch:
@@ -10,16 +10,22 @@ jobs:
   fix:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Apply all fixes
+      - name: Apply fixes
         run: |
           python3 << 'PYEOF'
           import re
           import textwrap
 
-          # ── 1. Rewrite src/index.ts (hapus admin, fix ScheduledController)
+          # 1. wrangler.toml - hapus [triggers]
+          p = 'wrangler.toml'
+          s = open(p).read()
+          s = re.sub(r'\[triggers\]\ncrons = .*?\n\n', '', s, flags=re.DOTALL)
+          open(p, 'w').write(s)
+          print('OK: wrangler.toml - cron dihapus')
+
+          # 2. src/index.ts - rewrite dengan /run tanpa auth
           index_content = textwrap.dedent('''
           import type { Env } from './types';
           import { runScrapeCron } from './handlers/cron';
@@ -43,83 +49,26 @@ jobs:
                 return Response.json(stats);
               }
 
-              return new Response('Not Found', { status: 404 });
-            },
+              if (url.pathname === '/run') {
+                try {
+                  const result = await runScrapeCron(env);
+                  return Response.json({ ok: true, result });
+                } catch (err) {
+                  return Response.json(
+                    { ok: false, error: (err as Error).message },
+                    { status: 500 }
+                  );
+                }
+              }
 
-            async scheduled(
-              _controller: ScheduledController,
-              env: Env,
-              ctx: ExecutionContext
-            ): Promise<void> {
-              ctx.waitUntil(
-                (async () => {
-                  try {
-                    const result = await runScrapeCron(env);
-                    console.log(
-                      '[Cron] done - success=' + result.succeeded +
-                      ', failed=' + result.failed +
-                      ', skipped=' + result.skipped
-                    );
-                  } catch (err) {
-                    console.error('[Cron] failed:', err);
-                  }
-                })()
-              );
+              return new Response('Not Found', { status: 404 });
             },
           } satisfies ExportedHandler<Env>;
           ''').lstrip()
           open('src/index.ts', 'w').write(index_content)
-          print('OK: src/index.ts rewritten (no admin, ScheduledController)')
-
-          # ── 2. types.ts — remove ADMIN_SECRET & PER_ANIME_TIMEOUT_MS
-          p = 'src/types.ts'
-          s = open(p).read()
-          s = re.sub(r'\n\s*ADMIN_SECRET\??:\s*string;', '', s)
-          s = re.sub(r'\n\s*PER_ANIME_TIMEOUT_MS:\s*string;', '', s)
-          open(p, 'w').write(s)
-          print('OK: src/types.ts cleaned')
-
-          # ── 3. transform.ts — remove stripHtml
-          p = 'src/lib/transform.ts'
-          s = open(p).read()
-          s = re.sub(
-              r'function stripHtml\(s: string\): string \{[\s\S]*?\n\}\n',
-              '',
-              s
-          )
-          open(p, 'w').write(s)
-          print('OK: src/lib/transform.ts stripHtml removed')
-
-          # ── 4. cron.ts — remove runScrapeManual + unused import
-          p = 'src/handlers/cron.ts'
-          s = open(p).read()
-          s = s.replace(
-              'import {\n  githubCommitFile,\n  githubCommitMultipleFiles,\n  githubGetFile,\n} from',
-              'import {\n  githubCommitMultipleFiles,\n  githubGetFile,\n} from'
-          )
-          s = re.sub(
-              r'export async function runScrapeManual\([\s\S]*?\n\}\n',
-              '',
-              s
-          )
-          s = re.sub(r'\nvoid githubCommitFile;\n?', '\n', s)
-          open(p, 'w').write(s)
-          print('OK: src/handlers/cron.ts cleaned')
-
-          # ── 5. wrangler.toml — remove ADMIN_SECRET & PER_ANIME_TIMEOUT_MS
-          p = 'wrangler.toml'
-          s = open(p).read()
-          s = re.sub(r'\nADMIN_SECRET = .*\n', '\n', s)
-          s = re.sub(r'\nPER_ANIME_TIMEOUT_MS = .*\n', '\n', s)
-          open(p, 'w').write(s)
-          print('OK: wrangler.toml cleaned')
+          print('OK: src/index.ts - /run tanpa auth')
 
           PYEOF
-
-      - name: Show diff
-        run: |
-          echo "=== Files changed ==="
-          git diff --stat
 
       - name: Commit & push
         run: |
@@ -129,6 +78,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes"
           else
-            git commit -m "fix: resolve TS errors + simplify (no admin)"
+            git commit -m "fix: HTTP trigger tanpa auth (limit cron)"
             git push
           fi
