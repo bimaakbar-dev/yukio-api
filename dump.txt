@@ -1,0 +1,2494 @@
+=== REPO DUMP ===
+Generated: Thu Oct  8 13:17:41 UTC 2026
+Commit: c7bfdef
+
+=== STRUCTURE ===
+.
+./src
+./src/handlers
+./src/lib
+
+=== FILES ===
+./.github/workflows/deploy.yml
+./.github/workflows/dump.yml
+./.github/workflows/gen-lock.yml
+./.github/workflows/scrape.yml
+./README.md
+./package.json
+./src/handlers/cron.ts
+./src/index.ts
+./src/lib/github-app.ts
+./src/lib/github.ts
+./src/lib/sources.ts
+./src/lib/state.ts
+./src/lib/transform.ts
+./src/types.ts
+./tsconfig.json
+./wrangler.toml
+
+=== CONTENTS ===
+
+=== DUMP COMPLETE ===
+workflows/deploy.yml =====
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy yukio-api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+===== END FILE =====
+
+===== FILE: ./.github/workflows/dump.yml =====
+name: Dump Repo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build dump
+        run: |
+          OUTPUT="dump.txt"
+          {
+            echo "=== REPO DUMP ==="
+            echo "Generated: $(date -u)"
+            echo "Commit: $(git rev-parse --short HEAD)"
+            echo ""
+
+            echo "=== STRUCTURE ==="
+            find . -type d \
+              -not -path "./.git*" \
+              -not -path "./node_modules*" \
+              -not -path "./dist*" \
+              -not -path "./.wrangler*" \
+              -not -path "./.astro*" \
+              | sort
+            echo ""
+
+            echo "=== FILES ==="
+            find . -type f \
+              -not -path "./.git/*" \
+              -not -path "./node_modules/*" \
+              -not -path "./dist/*" \
+              -not -path "./.wrangler/*" \
+              -not -path "./.astro/*" \
+              -not -name "dump.txt" \
+              -not -name "package-lock.json" \
+              -not -name "*.log" \
+              -not -name ".DS_Store" \
+              -not -name "*.png" \
+              -not -name "*.jpg" \
+              -not -name "*.jpeg" \
+              -not -name "*.gif" \
+              -not -name "*.ico" \
+              -not -name "*.woff" \
+              -not -name "*.woff2" \
+              -not -name "*.ttf" \
+              -not -name "*.otf" \
+              -not -name "*.webp" \
+              -not -name "*.mp4" \
+              -not -name "*.pdf" \
+              -not -name "*.zip" \
+              -size -100k \
+              | sort
+            echo ""
+
+            echo "=== CONTENTS ==="
+            find . -type f \
+              -not -path "./.git/*" \
+              -not -path "./node_modules/*" \
+              -not -path "./dist/*" \
+              -not -path "./.wrangler/*" \
+              -not -path "./.astro/*" \
+              -not -name "dump.txt" \
+              -not -name "package-lock.json" \
+              -not -name "*.log" \
+              -not -name ".DS_Store" \
+              -not -name "*.png" \
+              -not -name "*.jpg" \
+              -not -name "*.jpeg" \
+              -not -name "*.gif" \
+              -not -name "*.ico" \
+              -not -name "*.woff" \
+              -not -name "*.woff2" \
+              -not -name "*.ttf" \
+              -not -name "*.otf" \
+              -not -name "*.webp" \
+              -not -name "*.mp4" \
+              -not -name "*.pdf" \
+              -not -name "*.zip" \
+              -size -100k \
+              | sort | while read -r file; do
+                echo "" >> "$OUTPUT"
+                echo "===== FILE: $file =====" >> "$OUTPUT"
+                sed -E \
+                  -e 's/[0-9]{8,10}:[A-Za-z0-9_-]{35}/***TELEGRAM_TOKEN***/g' \
+                  -e 's/(BOT_TOKEN|API_TOKEN|CLIENT_SECRET|API_KEY|PASSWORD|CLOUDFLARE_API_TOKEN)[[:space:]]*=[[:space:]]*["'"'"']?[^"'"'"'[:space:]]+/\1=***REDACTED***/g' \
+                  "$file" >> "$OUTPUT" 2>/dev/null || echo "[binary]" >> "$OUTPUT"
+                echo "" >> "$OUTPUT"
+                echo "===== END FILE =====" >> "$OUTPUT"
+              done
+
+            echo ""
+            echo "=== DUMP COMPLETE ==="
+          } > "$OUTPUT"
+
+          echo "Generated: $(wc -l < $OUTPUT) lines, $(du -h $OUTPUT | cut -f1)"
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dump.txt
+          if git diff --staged --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore: dump repo [skip ci]"
+            git push
+          fi
+
+===== END FILE =====
+
+===== FILE: ./.github/workflows/gen-lock.yml =====
+name: Generate Package Lock
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Generate lock file
+        run: npm install --package-lock-only
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --staged --quiet; then
+            echo "Lock file tidak berubah, skip commit."
+          else
+            git commit -m "chore: generate package-lock.json"
+            git push
+          fi
+===== END FILE =====
+
+===== FILE: ./.github/workflows/scrape.yml =====
+name: Cron Scrape
+
+on:
+#  schedule:
+#    - cron: #'*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger scrape
+        run: |
+          echo "Trigger at: $(date -u)"
+          curl --max-time 300 \
+            --output response.json \
+            --write-out "\nHTTP %{http_code} - %{time_total}s\n" \
+            "https://yukio-api.bimaakbar.workers.dev/run" || true
+          echo "=== Response ==="
+          cat response.json || echo "(empty)"
+===== END FILE =====
+
+===== FILE: ./README.md =====
+<div align="center">
+
+[![Cron Scrape](https://github.com/bimaakbar-dev/yukio-api/actions/workflows/scrape.yml/badge.svg)](https://github.com/bimaakbar-dev/yukio-api/actions/workflows/scrape.yml)
+
+<h1>YUKIO SCRAPPER</h1>
+
+</div>
+
+Anime scraper untuk [Yukionime](https://yukionime.pages.dev).
+
+Fetch metadata + characters + voice actors + episodes + franchises dari
+AniList/Shikimori/Kitsu, push ke repo yukio-data.
+
+---
+
+## Cara Kerja
+
+```plaintext
+[ Cron tiap 10 menit ]
+        │
+        ▼
+[ yukio-api Worker ]
+        │
+        ├─ Fetch daftar anime dari yukionime API
+        ├─ Ambil batch 8 anime yang belum di-scrape
+        ├─ Untuk tiap anime:
+        │     ├─ Chain: AniList → Shikimori → Kitsu
+        │     ├─ Fetch chars + VA + relations + episodes
+        │     ├─ Generate sinopsis (AI kalau perlu)
+        │     └─ Push ke yukio-data
+        └─ Log progress ke D1
+```
+
+Setelah semua anime selesai di-scrape, worker bisa dimatikan atau
+cron di-comment di wrangler.toml.
+
+---
+
+## Endpoint
+
+| Method | Path | Fungsi |
+|--------|------|--------|
+| GET | / | Health check |
+| GET | /stats | Ringkasan progress scraping |
+| GET | /state?slug=naruto | Detail state 1 anime |
+| POST | /admin/scrape?limit=5 | Trigger manual (butuh X-Admin-Secret) |
+| POST | /admin/reset-stale | Reset yang stuck (butuh secret) |
+
+---
+
+## Setup
+
+### 1. Install
+
+```bash
+npm install
+```
+
+### 2. Set secrets
+
+```bash
+npx wrangler secret put GH_TOKEN       # fine-grained PAT, akses yukio-data
+```
+
+### 3. Update wrangler.toml
+
+Isi database_id dengan UUID D1 kamu.
+
+### 4. Apply migration
+
+```bash
+npm run db:init
+```
+
+### 5. Deploy
+
+```bash
+npm run deploy
+```
+
+---
+
+## Cek Progress
+
+```bash
+curl https://yukio-api.bimaakbar.workers.dev/stats
+curl "https://yukio-api.bimaakbar.workers.dev/state?slug=naruto"
+```
+
+---
+
+## Manual Trigger
+
+```bash
+curl -X POST "https://yukio-api.bimaakbar.workers.dev/admin/scrape?limit=5"
+```
+
+---
+
+## Disable Setelah Selesai
+
+Kalau semua anime sudah di-scrape:
+
+### Opsi A — Comment cron
+
+Edit wrangler.toml:
+
+```toml
+[triggers]
+# crons = ["*/10 * * * *"]
+```
+
+Deploy ulang.
+
+### Opsi B — Hapus worker
+
+Dashboard Cloudflare → Workers & Pages → yukio-api → Delete.
+
+---
+
+## Sumber Data
+
+- [AniList](https://anilist.co) (via proxy yukio-db.val.run)
+- [Shikimori](https://shikimori.one)
+- [Kitsu](https://kitsu.io)
+
+---
+
+## Lisensi
+
+Data: CC BY 4.0. Lihat [yukionime](https://github.com/bimaakbar-dev/yukionime)
+untuk lisensi lengkap.
+===== END FILE =====
+
+===== FILE: ./package.json =====
+{
+  "name": "yukio-api",
+  "version": "2.0.0",
+  "description": "Anime scraper — fetch dari AniList/Shikimori/Kitsu, push ke yukio-data",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "db:init": "wrangler d1 execute yukio-ratings-db --remote --file=./migrations/0002_scrape_state.sql",
+    "db:init:local": "wrangler d1 execute yukio-ratings-db --local --file=./migrations/0002_scrape_state.sql",
+    "db:query": "wrangler d1 execute yukio-ratings-db --remote --command=\"SELECT * FROM scrape_state LIMIT 20\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260907.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.78.0"
+  }
+}
+===== END FILE =====
+
+===== FILE: ./src/handlers/cron.ts =====
+import type { Env, UnifiedVoiceActor, FileToCommit } from '../types';
+import {
+  fetchAniListTop,
+  fetchAniListById,
+  fetchCharactersFromAniList,
+  fetchRelationsFromShikimori,
+  fetchEpisodesFromKitsu,
+  searchKitsuId,
+  slugify,
+} from '../lib/sources';
+import { buildAll } from '../lib/transform';
+import { githubCommitMultipleFiles, githubGetFile } from '../lib/github';
+import {
+  getMeta,
+  setMeta,
+  insertQueue,
+  getQueuePendingCount,
+  nextQueueItem,
+  markQueueInProgress,
+  deleteQueueItem,
+  markQueueFailed,
+  getQueueStats,
+} from '../lib/state';
+
+const REFILL_THRESHOLD = 100;
+const DEFAULT_MAX_EPISODES = 100;
+const DEFAULT_MAX_CHARACTERS = 100;
+
+function stripHtml(s: string): string {
+  return s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function refillQueue(env: Env): Promise<number> {
+  const startPage = parseInt(env.START_PAGE ?? '1', 10);
+  const step = parseInt(env.PAGE_STEP ?? '1', 10);
+  const sortKey = env.ANILIST_SORT || 'popular';
+
+  const currentMeta = await getMeta(env, 'next_page');
+  const nextPage = parseInt(currentMeta ?? String(startPage), 10);
+
+  const items = await fetchAniListTop(nextPage, sortKey);
+
+  if (items.length === 0) return 0;
+
+  const inserts = items.map((item) => {
+    const title =
+      item.title.romaji || item.title.english || item.title.native || 'Unknown';
+    return {
+      anilistId: item.id,
+      slug: slugify(title) || `anilist-${item.id}`,
+      title,
+    };
+  });
+
+  await insertQueue(env, inserts);
+
+  const totalStr = (await getMeta(env, 'total_fetched')) ?? '0';
+  const total = parseInt(totalStr, 10) + items.length;
+
+  await setMeta(env, 'next_page', String(nextPage + step));
+  await setMeta(env, 'total_fetched', String(total));
+
+  return inserts.length;
+}
+
+interface ScrapeResult {
+  ok: boolean;
+  fileCount: number;
+  error?: string;
+  voiceActors: UnifiedVoiceActor[];
+}
+
+async function scrapeOne(
+  env: Env,
+  slug: string,
+  anilistId: number,
+  title: string
+): Promise<ScrapeResult> {
+  const media = await fetchAniListById(anilistId);
+  if (!media) {
+    return { ok: false, fileCount: 0, error: 'anilist not found', voiceActors: [] };
+  }
+
+  const malId = media.myanimelistId ?? null;
+  const kitsuId = await searchKitsuId(title).catch(() => null);
+
+  const maxChars = parseInt(env.MAX_CHARACTERS ?? String(DEFAULT_MAX_CHARACTERS), 10);
+  const maxEps = parseInt(env.MAX_EPISODES ?? String(DEFAULT_MAX_EPISODES), 10);
+
+  const [chars, rels, eps] = await Promise.all([
+    malId ? fetchCharactersFromAniList(malId, maxChars).catch(() => null) : null,
+    malId ? fetchRelationsFromShikimori(malId).catch(() => null) : null,
+    kitsuId ? fetchEpisodesFromKitsu(kitsuId, maxEps).catch(() => null) : null,
+  ]);
+
+  const built = buildAll({
+    slug,
+    media,
+    malId,
+    kitsuId,
+    synopsis: stripHtml(media.description ?? '') || '> ⚠️ Sinopsis belum tersedia.',
+    characters: chars?.characters ?? [],
+    episodes: eps ?? [],
+    relations: rels ?? [],
+    voiceActors: chars?.voiceActors ?? [],
+  });
+
+  const files: FileToCommit[] = [
+    { path: `src/content/anime/${slug}.md`, content: built.markdown },
+    ...built.animeFiles,
+  ];
+
+  const result = await githubCommitMultipleFiles(
+    env,
+    files,
+    `feat(${slug}): scrape from AniList`
+  );
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      fileCount: 0,
+      error: result.error ?? 'commit failed',
+      voiceActors: chars?.voiceActors ?? [],
+    };
+  }
+
+  return {
+    ok: true,
+    fileCount: files.length,
+    voiceActors: chars?.voiceActors ?? [],
+  };
+}
+
+async function mergeActorFiles(
+  env: Env,
+  incoming: UnifiedVoiceActor[]
+): Promise<{ ok: boolean; files: number; error?: string }> {
+  if (incoming.length === 0) return { ok: true, files: 0 };
+
+  const grouped = new Map<string, UnifiedVoiceActor[]>();
+  for (const va of incoming) {
+    const letter = /^[a-z]$/.test(va.id[0]?.toLowerCase() ?? '')
+      ? va.id[0]!.toLowerCase()
+      : '_';
+    if (!grouped.has(letter)) grouped.set(letter, []);
+    grouped.get(letter)!.push(va);
+  }
+
+  const files: FileToCommit[] = [];
+
+  for (const [letter, list] of grouped) {
+    const path = `data/actors/${letter}.json`;
+    const existing = await githubGetFile(env, path);
+
+    const map = new Map<string, UnifiedVoiceActor>();
+    if (existing) {
+      try {
+        for (const va of JSON.parse(existing.content) as UnifiedVoiceActor[]) {
+          if (va?.id) map.set(va.id, va);
+        }
+      } catch {}
+    }
+
+    let newCount = 0;
+    for (const va of list) {
+      if (map.has(va.id)) {
+        const old = map.get(va.id)!;
+        map.set(va.id, {
+          ...old,
+          ...Object.fromEntries(
+            Object.entries(va).filter(([, v]) => v != null && v !== '')
+          ),
+        });
+      } else {
+        map.set(va.id, va);
+        newCount++;
+      }
+    }
+
+    if (newCount === 0 && existing) continue;
+
+    files.push({
+      path,
+      content: JSON.stringify(
+        [...map.values()].sort((a, b) => a.id.localeCompare(b.id)),
+        null,
+        2
+      ) + '\n',
+    });
+  }
+
+  if (files.length === 0) return { ok: true, files: 0 };
+
+  const r = await githubCommitMultipleFiles(
+    env,
+    files,
+    `chore(actors): update ${files.length} file(s)`
+  );
+
+  return r.ok ? { ok: true, files: files.length } : { ok: false, files: 0, error: r.error };
+}
+
+export interface CronRunResult {
+  refilled: number;
+  succeeded: number;
+  failed: number;
+  actorFilesUpdated: number;
+  queuePending: number;
+  queueTotal: number;
+  nextPage: number;
+  errors: string[];
+}
+
+export async function runScrapeCron(env: Env): Promise<CronRunResult> {
+  const result: CronRunResult = {
+    refilled: 0,
+    succeeded: 0,
+    failed: 0,
+    actorFilesUpdated: 0,
+    queuePending: 0,
+    queueTotal: 0,
+    nextPage: 1,
+    errors: [],
+  };
+
+  try {
+    if ((await getQueuePendingCount(env)) < REFILL_THRESHOLD) {
+      result.refilled = await refillQueue(env);
+    }
+  } catch (err) {
+    result.errors.push(`refill: ${(err as Error).message}`);
+  }
+
+  const item = await nextQueueItem(env);
+  if (!item) {
+    const s = await getQueueStats(env);
+    result.queuePending = s.pending;
+    result.queueTotal = s.total;
+    result.nextPage = s.next_page;
+    return result;
+  }
+
+  if (!(await markQueueInProgress(env, item.id))) return result;
+
+  let scrape: ScrapeResult;
+  try {
+    scrape = await scrapeOne(env, item.slug, item.anilist_id, item.title);
+  } catch (err) {
+    scrape = {
+      ok: false,
+      fileCount: 0,
+      error: (err as Error).message,
+      voiceActors: [],
+    };
+  }
+
+  if (scrape.ok) {
+    await deleteQueueItem(env, item.id);
+    result.succeeded = 1;
+
+    if (scrape.voiceActors.length > 0) {
+      const a = await mergeActorFiles(env, scrape.voiceActors);
+      if (a.ok) result.actorFilesUpdated = a.files;
+      else result.errors.push(`actors: ${a.error}`);
+    }
+  } else {
+    await markQueueFailed(env, item.id, scrape.error ?? 'unknown');
+    result.failed = 1;
+    result.errors.push(`${item.slug}: ${scrape.error}`);
+  }
+
+  const s = await getQueueStats(env);
+  result.queuePending = s.pending;
+  result.queueTotal = s.total;
+  result.nextPage = s.next_page;
+
+  return result;
+}
+
+===== END FILE =====
+
+===== FILE: ./src/index.ts =====
+import type { Env } from './types';
+import { runScrapeCron } from './handlers/cron';
+import { getQueueStats, resetPermanentFailed } from './lib/state';
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/' || url.pathname === '/health') {
+      return Response.json({
+        status: 'ok',
+        service: 'yukio-api',
+        role: 'anime-scraper',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (url.pathname === '/stats') {
+      const stats = await getQueueStats(env);
+      return Response.json(stats);
+    }
+
+    if (url.pathname === '/run') {
+      try {
+        const result = await runScrapeCron(env);
+        return Response.json({ ok: true, result });
+      } catch (err) {
+        return Response.json(
+          { ok: false, error: (err as Error).message },
+          { status: 500 }
+        );
+      }
+    }
+
+    if (url.pathname === '/reset-failed') {
+      const reset = await resetPermanentFailed(env);
+      return Response.json({ ok: true, reset });
+    }
+
+    return new Response('Not Found', { status: 404 });
+  },
+} satisfies ExportedHandler<Env>;
+===== END FILE =====
+
+===== FILE: ./src/lib/github-app.ts =====
+import type { Env } from '../types';
+
+interface CachedToken {
+  token: string;
+  expiresAt: number;
+}
+
+let cachedToken: CachedToken | null = null;
+
+function base64url(input: string | Uint8Array): string {
+  let b64: string;
+  if (typeof input === 'string') {
+    const bytes = new TextEncoder().encode(input);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+    b64 = btoa(bin);
+  } else {
+    let bin = '';
+    for (let i = 0; i < input.length; i++) bin += String.fromCharCode(input[i]!);
+    b64 = btoa(bin);
+  }
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function pemToArrayBuffer(pem: string): ArrayBuffer {
+  const b64 = pem
+    .replace(/-----BEGIN [^-]+-----/g, '')
+    .replace(/-----END [^-]+-----/g, '')
+    .replace(/\s+/g, '');
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'pkcs8',
+    pemToArrayBuffer(pem),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+}
+
+async function createJWT(env: Env): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = { iat: now - 60, exp: now + 600, iss: env.GH_APP_ID };
+
+  const headerB64 = base64url(JSON.stringify(header));
+  const payloadB64 = base64url(JSON.stringify(payload));
+  const signingInput = `${headerB64}.${payloadB64}`;
+
+  const key = await importPrivateKey(env.GH_APP_PRIVATE_KEY);
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    new TextEncoder().encode(signingInput)
+  );
+
+  return `${signingInput}.${base64url(new Uint8Array(signature))}`;
+}
+
+export async function getInstallationToken(env: Env): Promise<string> {
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+    return cachedToken.token;
+  }
+
+  const jwt = await createJWT(env);
+  const url = `https://api.github.com/app/installations/${env.GH_APP_INSTALLATION_ID}/access_tokens`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'yukio-api/2.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Installation token failed: HTTP ${res.status} ${err.slice(0, 200)}`);
+  }
+
+  const data = (await res.json()) as { token: string; expires_at: string };
+  cachedToken = { token: data.token, expiresAt: new Date(data.expires_at).getTime() };
+  return data.token;
+}
+
+===== END FILE =====
+
+===== FILE: ./src/lib/github.ts =====
+import type { Env, FileToCommit, CommitResult } from '../types';
+import { getInstallationToken } from './github-app';
+
+const API_BASE = 'https://api.github.com';
+
+function b64Encode(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin);
+}
+
+function b64Decode(b64: string): string {
+  const bin = atob(b64.replace(/\s+/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+async function headers(env: Env): Promise<Record<string, string>> {
+  const token = await getInstallationToken(env);
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'yukio-api/2.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
+export interface GithubFile {
+  path: string;
+  sha: string;
+  content: string;
+}
+
+export async function githubGetFile(env: Env, path: string): Promise<GithubFile | null> {
+  const url = `${API_BASE}/repos/${env.YUKIO_DATA_REPO}/contents/${path}?ref=${env.YUKIO_DATA_BRANCH}`;
+  const res = await fetch(url, { headers: await headers(env) });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`GitHub GET ${path} HTTP ${res.status}: ${err.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { path: string; sha: string; content: string };
+  return { path: data.path, sha: data.sha, content: b64Decode(data.content) };
+}
+
+export async function githubCommitFile(
+  env: Env,
+  path: string,
+  content: string,
+  message: string
+): Promise<CommitResult> {
+  const repo = env.YUKIO_DATA_REPO;
+  const branch = env.YUKIO_DATA_BRANCH;
+
+  let sha: string | undefined;
+  try {
+    const existing = await githubGetFile(env, path);
+    if (existing) sha = existing.sha;
+  } catch {}
+
+  const body: Record<string, unknown> = { message, content: b64Encode(content), branch };
+  if (sha) body.sha = sha;
+
+  const url = `${API_BASE}/repos/${repo}/contents/${path}`;
+  const h = await headers(env);
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { ...h, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    return { ok: false, error: `HTTP ${res.status}: ${err.slice(0, 300)}` };
+  }
+
+  const data = (await res.json()) as { commit?: { sha: string; html_url: string } };
+  return { ok: true, sha: data.commit?.sha, commitUrl: data.commit?.html_url };
+}
+
+export async function githubCommitMultipleFiles(
+  env: Env,
+  files: FileToCommit[],
+  message: string
+): Promise<CommitResult> {
+  if (files.length === 0) return { ok: false, error: 'No files to commit' };
+  if (files.length === 1) {
+    return githubCommitFile(env, files[0]!.path, files[0]!.content, message);
+  }
+
+  const repo = env.YUKIO_DATA_REPO;
+  const branch = env.YUKIO_DATA_BRANCH;
+  const base = `${API_BASE}/repos/${repo}`;
+  const h = await headers(env);
+
+  try {
+    const refRes = await fetch(`${base}/git/ref/heads/${branch}`, { headers: h });
+    if (!refRes.ok) return { ok: false, error: `Get ref failed: HTTP ${refRes.status}` };
+    const refData = (await refRes.json()) as { object: { sha: string } };
+    const parentCommitSha = refData.object.sha;
+
+    const commitRes = await fetch(`${base}/git/commits/${parentCommitSha}`, { headers: h });
+    if (!commitRes.ok) return { ok: false, error: `Get commit failed: HTTP ${commitRes.status}` };
+    const commitData = (await commitRes.json()) as { tree: { sha: string } };
+    const baseTreeSha = commitData.tree.sha;
+
+    const blobs = await Promise.all(
+      files.map(async (f) => {
+        const r = await fetch(`${base}/git/blobs`, {
+          method: 'POST',
+          headers: { ...h, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: b64Encode(f.content), encoding: 'base64' }),
+        });
+        if (!r.ok) throw new Error(`Blob ${f.path} failed: HTTP ${r.status}`);
+        const d = (await r.json()) as { sha: string };
+        return { path: f.path, sha: d.sha };
+      })
+    );
+
+    const treeRes = await fetch(`${base}/git/trees`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        base_tree: baseTreeSha,
+        tree: blobs.map((b) => ({ path: b.path, mode: '100644', type: 'blob', sha: b.sha })),
+      }),
+    });
+    if (!treeRes.ok) return { ok: false, error: `Create tree failed: HTTP ${treeRes.status}` };
+    const treeData = (await treeRes.json()) as { sha: string };
+
+    const newCommitRes = await fetch(`${base}/git/commits`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, tree: treeData.sha, parents: [parentCommitSha] }),
+    });
+    if (!newCommitRes.ok) {
+      return { ok: false, error: `Create commit failed: HTTP ${newCommitRes.status}` };
+    }
+    const newCommitData = (await newCommitRes.json()) as { sha: string };
+
+    const updateRes = await fetch(`${base}/git/refs/heads/${branch}`, {
+      method: 'PATCH',
+      headers: { ...h, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sha: newCommitData.sha, force: false }),
+    });
+    if (!updateRes.ok) return { ok: false, error: `Update ref failed: HTTP ${updateRes.status}` };
+
+    return {
+      ok: true,
+      sha: newCommitData.sha,
+      commitUrl: `https://github.com/${repo}/commit/${newCommitData.sha}`,
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message ?? 'unknown' };
+  }
+}
+
+===== END FILE =====
+
+===== FILE: ./src/lib/sources.ts =====
+import type {
+  AniListMedia,
+  AniListTopItem,
+  UnifiedVoiceActor,
+  UnifiedCharacter,
+  UnifiedEpisode,
+  UnifiedRelation,
+} from '../types';
+
+const ANILIST_PROXY = 'https://yukio-db.val.run/';
+const SHIKIMORI_BASE = 'https://shikimori.one/api/animes';
+const KITSU_BASE = 'https://kitsu.io/api/edge/anime';
+
+const TIMEOUT_MS = 12000;
+const PAGE_SIZE = 50;
+const KITSU_PAGE_LIMIT = 20;
+const PARALLEL_BATCH = 5;
+
+async function fetchTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = TIMEOUT_MS
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+export { slugify };
+
+/* ============================================================
+   ANILIST GRAPHQL - via proxy Val Town
+   ============================================================ */
+
+async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
+  try {
+    const res = await fetchTimeout(ANILIST_PROXY, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as {
+      data?: T;
+      errors?: { message: string }[];
+    };
+
+    if (json.errors?.length) return null;
+    return json.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* ============================================================
+   ANILIST - TOP LIST (untuk queue)
+   ============================================================ */
+
+const SORT_MAP: Record<string, string> = {
+  popular: 'POPULARITY_DESC',
+  rating: 'SCORE_DESC',
+  trending: 'TRENDING_DESC',
+  id: 'ID',
+};
+
+export async function fetchAniListTop(
+  page: number,
+  sortKey: string
+): Promise<AniListTopItem[]> {
+  const sort = SORT_MAP[sortKey] ?? 'POPULARITY_DESC';
+
+  const query = `
+    query ($page: Int) {
+      Page(page: $page, perPage: ${PAGE_SIZE}) {
+        media(type: ANIME, sort: [${sort}], isAdult: false) {
+          id
+          idMal
+          title { romaji english native }
+          format
+        }
+      }
+    }
+  `;
+
+  const data = await gql<{
+    Page?: { media?: AniListTopItem[] };
+  }>(query, { page });
+
+  return data?.Page?.media ?? [];
+}
+
+/* ============================================================
+   ANILIST - METADATA (by ID)
+   ============================================================ */
+
+interface AniListMediaRaw {
+  id: number;
+  idMal: number | null;
+  title: { romaji?: string; english?: string; native?: string };
+  coverImage: { extraLarge?: string; large?: string };
+  bannerImage: string | null;
+  description: string | null;
+  genres: string[];
+  studios: { nodes: { name: string }[] };
+  episodes: number | null;
+  duration: number | null;
+  status: string;
+  format: string;
+  season: string | null;
+  seasonYear: number | null;
+  startDate: { year: number | null; month: number | null; day: number | null };
+  endDate: { year: number | null; month: number | null; day: number | null };
+  averageScore: number | null;
+  trailer: { id: string; site: string } | null;
+  source: string | null;
+}
+
+function mapAniListFormat(raw: string | null | undefined): string {
+  if (!raw) return 'TV';
+  const upper = raw.toUpperCase();
+  const map: Record<string, string> = {
+    TV: 'TV',
+    TV_SHORT: 'TV',
+    MOVIE: 'MOVIE',
+    SPECIAL: 'SPECIAL',
+    OVA: 'OVA',
+    ONA: 'ONA',
+    MUSIC: 'MUSIC',
+  };
+  return map[upper] ?? 'TV';
+}
+
+function mapAniListStatus(raw: string | null | undefined): string {
+  if (!raw) return 'RELEASING';
+  const upper = raw.toUpperCase();
+  const map: Record<string, string> = {
+    FINISHED: 'FINISHED',
+    RELEASING: 'RELEASING',
+    NOT_YET_RELEASED: 'NOT_YET_RELEASED',
+    CANCELLED: 'CANCELLED',
+    HIATUS: 'HIATUS',
+  };
+  return map[upper] ?? 'RELEASING';
+}
+
+function mapAniListSource(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const map: Record<string, string> = {
+    original: 'original',
+    manga: 'manga',
+    light_novel: 'light_novel',
+    visual_novel: 'visual_novel',
+    video_game: 'game',
+    game: 'game',
+    novel: 'novel',
+    doujinshi: 'manga',
+    anime: 'original',
+    web_novel: 'web_novel',
+    live_action: 'other',
+    comic: 'manga',
+    multimedia_project: 'other',
+    picture_book: 'picture_book',
+    radio: 'radio',
+    music: 'music',
+    card_game: 'card_game',
+    '4_koma_manga': '4_koma_manga',
+    book: 'book',
+    other: 'other',
+  };
+  return map[lower] ?? null;
+}
+
+export async function fetchAniListById(id: number): Promise<AniListMedia | null> {
+  const query = `
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        id
+        idMal
+        title { romaji english native }
+        coverImage { extraLarge large }
+        bannerImage
+        description
+        genres
+        studios(isMain: true) { nodes { name } }
+        episodes
+        duration
+        status
+        format
+        season
+        seasonYear
+        startDate { year month day }
+        endDate { year month day }
+        averageScore
+        trailer { id site }
+        source
+      }
+    }
+  `;
+
+  const data = await gql<{ Media?: AniListMediaRaw }>(query, { id });
+  const m = data?.Media;
+  if (!m) return null;
+
+  let trailer: string | null = null;
+  if (m.trailer?.site === 'youtube' && m.trailer.id) {
+    trailer = m.trailer.id;
+  }
+
+  const studios = (m.studios?.nodes ?? [])
+    .map((s) => ({ name: s.name }))
+    .slice(0, 3);
+
+  return {
+    id: m.id,
+    title: {
+      romaji: m.title.romaji ?? 'Unknown',
+      english: m.title.english ?? null,
+      native: m.title.native ?? null,
+    },
+    coverImage: {
+      extraLarge: m.coverImage.extraLarge ?? '',
+      large: m.coverImage.large ?? '',
+    },
+    description: m.description ?? null,
+    format: mapAniListFormat(m.format),
+    status: mapAniListStatus(m.status),
+    seasonYear: m.seasonYear ?? null,
+    episodes: m.episodes ?? null,
+    genres: Array.isArray(m.genres) ? m.genres : [],
+    averageScore: m.averageScore ?? null,
+    studios: { nodes: studios },
+    startDate: {
+      year: m.startDate?.year ?? null,
+      month: m.startDate?.month ?? null,
+      day: m.startDate?.day ?? null,
+    },
+    duration: m.duration ?? null,
+    rating: null,
+    endDate: m.endDate?.year
+      ? {
+          year: m.endDate.year,
+          month: m.endDate.month ?? null,
+          day: m.endDate.day ?? null,
+        }
+      : null,
+    banner: m.bannerImage ?? null,
+    trailer,
+    myanimelistId: m.idMal ?? null,
+    source: mapAniListSource(m.source),
+  };
+}
+
+/* ============================================================
+   ANILIST - CHARACTERS
+   ============================================================ */
+
+interface AniListCharEdge {
+  role: string;
+  node: {
+    id: number;
+    name: { full?: string; native?: string };
+    image?: { large?: string };
+  };
+  voiceActors: {
+    id: number;
+    name: { full?: string; native?: string };
+    languageV2?: string;
+    image?: { large?: string };
+  }[];
+}
+
+async function fetchCharsPage(
+  idMal: number,
+  page: number
+): Promise<{ edges: AniListCharEdge[]; lastPage: number } | null> {
+  const query = `
+    query ($idMal: Int, $page: Int) {
+      Media(idMal: $idMal, type: ANIME) {
+        characters(page: $page, perPage: 25, sort: [ROLE, RELEVANCE]) {
+          pageInfo { hasNextPage currentPage lastPage total }
+          edges {
+            role
+            node {
+              id
+              name { full native }
+              image { large }
+            }
+            voiceActors(language: JAPANESE) {
+              id
+              name { full native }
+              languageV2
+              image { large }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await gql<{
+    Media?: {
+      characters?: {
+        pageInfo: { lastPage: number };
+        edges: AniListCharEdge[];
+      };
+    };
+  }>(query, { idMal, page });
+
+  const chars = data?.Media?.characters;
+  if (!chars) return null;
+
+  return {
+    edges: chars.edges ?? [],
+    lastPage: chars.pageInfo?.lastPage ?? 1,
+  };
+}
+
+export async function fetchCharactersFromAniList(
+  idMal: number,
+  maxChars: number
+): Promise<{
+  characters: UnifiedCharacter[];
+  voiceActors: UnifiedVoiceActor[];
+} | null> {
+  const first = await fetchCharsPage(idMal, 1);
+  if (!first) return null;
+
+  const maxPages = Math.ceil(maxChars / 25) + 1;
+  const lastPage = Math.min(first.lastPage, maxPages);
+  const allEdges: AniListCharEdge[] = [...first.edges];
+
+  if (lastPage > 1) {
+    for (let start = 2; start <= lastPage; start += PARALLEL_BATCH) {
+      const pages: number[] = [];
+      for (let i = 0; i < PARALLEL_BATCH && start + i <= lastPage; i++) {
+        pages.push(start + i);
+      }
+
+      const results = await Promise.allSettled(
+        pages.map((p) => fetchCharsPage(idMal, p))
+      );
+
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value) {
+          allEdges.push(...r.value.edges);
+        }
+      }
+    }
+  }
+
+  const characters: UnifiedCharacter[] = [];
+  const vaMap = new Map<string, UnifiedVoiceActor>();
+  const seenChars = new Set<string>();
+
+  for (const edge of allEdges) {
+    const roleRaw = (edge.role ?? '').toUpperCase();
+    if (roleRaw !== 'MAIN' && roleRaw !== 'SUPPORTING') continue;
+
+    const name = edge.node.name?.full?.trim();
+    if (!name || seenChars.has(name)) continue;
+    seenChars.add(name);
+
+    const vaSlugs: string[] = [];
+
+    for (const va of edge.voiceActors ?? []) {
+      const vaName = va.name?.full?.trim();
+      if (!vaName) continue;
+
+      const vaSlug = slugify(vaName);
+      if (!vaSlug) continue;
+
+      if (!vaMap.has(vaSlug)) {
+        vaMap.set(vaSlug, {
+          id: vaSlug,
+          name: vaName,
+          nameNative: va.name?.native?.trim() || undefined,
+          image: va.image?.large || undefined,
+          defaultLanguage: va.languageV2 || 'Japanese',
+        });
+      }
+
+      if (!vaSlugs.includes(vaSlug)) vaSlugs.push(vaSlug);
+    }
+
+    characters.push({
+      name,
+      nameNative: edge.node.name?.native?.trim() || undefined,
+      image: edge.node.image?.large || undefined,
+      role: roleRaw.toLowerCase() as 'main' | 'supporting',
+      voiceActors: vaSlugs,
+    });
+
+    if (characters.length >= maxChars) break;
+  }
+
+  const voiceActors = [...vaMap.values()].sort((a, b) =>
+    a.id.localeCompare(b.id)
+  );
+
+  return { characters, voiceActors };
+}
+
+/* ============================================================
+   SHIKIMORI - RELATIONS
+   ============================================================ */
+
+interface ShikimoriRelated {
+  relation?: string;
+  anime?: { id: number; name: string } | null;
+}
+
+function mapShikimoriRelation(raw: string | undefined): string {
+  if (!raw) return 'other';
+  const lower = raw.toLowerCase();
+  if (lower.includes('sequel')) return 'sequel';
+  if (lower.includes('prequel')) return 'prequel';
+  if (lower.includes('parent')) return 'parent_story';
+  if (lower.includes('side story')) return 'side_story';
+  if (lower.includes('spin')) return 'spin_off';
+  if (lower.includes('alternative')) return 'alternative';
+  if (lower.includes('adaptation')) return 'adaptation';
+  if (lower.includes('summary')) return 'summary';
+  if (lower.includes('full story')) return 'full_story';
+  if (lower.includes('character')) return 'character';
+  if (lower.includes('compilation')) return 'compilation';
+  if (lower.includes('contains')) return 'contains';
+  return 'other';
+}
+
+export async function fetchRelationsFromShikimori(
+  malId: number
+): Promise<UnifiedRelation[] | null> {
+  try {
+    const res = await fetchTimeout(`${SHIKIMORI_BASE}/${malId}/related`, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+    });
+
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as ShikimoriRelated[];
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    const out: UnifiedRelation[] = [];
+    const seen = new Set<string>();
+
+    for (const entry of data) {
+      if (!entry.anime) continue;
+      const name = entry.anime.name;
+      if (!name) continue;
+
+      const slug = slugify(name);
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+
+      out.push({
+        relation: mapShikimoriRelation(entry.relation),
+        slug,
+        title: name,
+      });
+    }
+
+    return out.length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/* ============================================================
+   KITSU - EPISODES
+   ============================================================ */
+
+interface KitsuAnimeRaw {
+  id: string;
+}
+
+interface KitsuEpisodeItem {
+  id: string;
+  attributes?: {
+    number?: number;
+    canonicalTitle?: string;
+    titles?: { en?: string; en_jp?: string; ja_jp?: string };
+    airdate?: string | null;
+    length?: number | null;
+  };
+}
+
+export async function searchKitsuId(title: string): Promise<string | null> {
+  try {
+    const params = new URLSearchParams();
+    params.set('filter[text]', title);
+    params.set('page[limit]', '1');
+
+    const res = await fetchTimeout(`${KITSU_BASE}?${params.toString()}`, {
+      headers: {
+        Accept: 'application/vnd.api+json',
+        'Content-Type': 'application/vnd.api+json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+    });
+
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as { data?: KitsuAnimeRaw[] };
+    return json.data?.[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchEpisodesPage(
+  kitsuId: string,
+  offset: number
+): Promise<KitsuEpisodeItem[] | null> {
+  try {
+    const params = new URLSearchParams();
+    params.set('page[limit]', String(KITSU_PAGE_LIMIT));
+    params.set('page[offset]', String(offset));
+    params.set('sort', 'number');
+
+    const res = await fetchTimeout(
+      `https://kitsu.io/api/edge/anime/${kitsuId}/episodes?${params.toString()}`,
+      {
+        headers: {
+          Accept: 'application/vnd.api+json',
+          'Content-Type': 'application/vnd.api+json',
+          'User-Agent': 'yukio-api/2.0',
+        },
+      }
+    );
+
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as { data?: KitsuEpisodeItem[] };
+    return json.data ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchEpisodesFromKitsu(
+  kitsuId: string,
+  maxEpisodes: number
+): Promise<UnifiedEpisode[] | null> {
+  const allEpisodes: KitsuEpisodeItem[] = [];
+  const maxPages = Math.ceil(maxEpisodes / KITSU_PAGE_LIMIT);
+
+  for (
+    let batchStart = 0;
+    batchStart < maxPages;
+    batchStart += PARALLEL_BATCH
+  ) {
+    const offsets: number[] = [];
+    for (let i = 0; i < PARALLEL_BATCH; i++) {
+      const pageIdx = batchStart + i;
+      if (pageIdx >= maxPages) break;
+      offsets.push(pageIdx * KITSU_PAGE_LIMIT);
+    }
+    if (offsets.length === 0) break;
+
+    const results = await Promise.allSettled(
+      offsets.map((off) => fetchEpisodesPage(kitsuId, off))
+    );
+
+    let batchHadEnd = false;
+
+    for (const r of results) {
+      if (r.status !== 'fulfilled' || !r.value) continue;
+      if (r.value.length === 0) {
+        batchHadEnd = true;
+        continue;
+      }
+      allEpisodes.push(...r.value);
+      if (r.value.length < KITSU_PAGE_LIMIT) batchHadEnd = true;
+    }
+
+    if (batchHadEnd) break;
+    if (allEpisodes.length >= maxEpisodes) break;
+  }
+
+  if (allEpisodes.length === 0) return null;
+
+  const out: UnifiedEpisode[] = [];
+  const seen = new Set<number>();
+
+  for (const ep of allEpisodes) {
+    const attr = ep.attributes ?? {};
+    const number = attr.number ?? out.length + 1;
+    if (seen.has(number)) continue;
+    seen.add(number);
+
+    const title =
+      attr.titles?.en ??
+      attr.titles?.en_jp ??
+      attr.canonicalTitle ??
+      `Episode ${number}`;
+
+    const aired = attr.airdate ? attr.airdate.split('T')[0] : undefined;
+    const duration =
+      attr.length && attr.length > 0 ? attr.length : undefined;
+
+    out.push({
+      number,
+      title,
+      ...(aired ? { aired } : {}),
+      ...(duration ? { duration } : {}),
+    });
+
+    if (out.length >= maxEpisodes) break;
+  }
+
+  out.sort((a, b) => a.number - b.number);
+  return out;
+}
+===== END FILE =====
+
+===== FILE: ./src/lib/state.ts =====
+import type { Env, ScrapeQueueRow } from '../types';
+
+const IN_PROGRESS_STALE_MS = 10 * 60 * 1000;
+
+/* ============================================================
+   META
+   ============================================================ */
+
+export async function getMeta(env: Env, key: string): Promise<string | null> {
+  const row = await env.DB
+    .prepare('SELECT value FROM scrape_meta WHERE key = ?')
+    .bind(key)
+    .first<{ value: string }>();
+
+  return row?.value ?? null;
+}
+
+export async function setMeta(
+  env: Env,
+  key: string,
+  value: string
+): Promise<void> {
+  await env.DB
+    .prepare(
+      `INSERT INTO scrape_meta (key, value, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value = excluded.value,
+         updated_at = excluded.updated_at`
+    )
+    .bind(key, value, Date.now())
+    .run();
+}
+
+/* ============================================================
+   QUEUE — INSERT (refill)
+   ============================================================ */
+
+export interface QueueInsertItem {
+  anilistId: number;
+  slug: string;
+  title: string;
+}
+
+export async function insertQueue(
+  env: Env,
+  items: QueueInsertItem[]
+): Promise<number> {
+  if (items.length === 0) return 0;
+
+  const now = Date.now();
+
+  const stmts = items.map((item) =>
+    env.DB
+      .prepare(
+        `INSERT OR IGNORE INTO scrape_queue
+          (anilist_id, slug, title, status, attempt_count, created_at, updated_at)
+         VALUES (?, ?, ?, 'pending', 0, ?, ?)`
+      )
+      .bind(item.anilistId, item.slug, item.title, now, now)
+  );
+
+  await env.DB.batch(stmts);
+
+  return items.length;
+}
+
+/* ============================================================
+   QUEUE — AMBIL NEXT
+   ============================================================ */
+
+export async function getQueuePendingCount(env: Env): Promise<number> {
+  const row = await env.DB
+    .prepare(
+      `SELECT COUNT(*) as c FROM scrape_queue
+       WHERE status = 'pending' OR (status = 'failed' AND attempt_count < 3)`
+    )
+    .first<{ c: number }>();
+
+  return row?.c ?? 0;
+}
+
+export async function getQueueTotal(env: Env): Promise<number> {
+  const row = await env.DB
+    .prepare('SELECT COUNT(*) as c FROM scrape_queue')
+    .first<{ c: number }>();
+
+  return row?.c ?? 0;
+}
+
+export async function resetStaleInProgress(env: Env): Promise<number> {
+  const cutoff = Date.now() - IN_PROGRESS_STALE_MS;
+
+  const res = await env.DB
+    .prepare(
+      `UPDATE scrape_queue
+       SET status = 'pending',
+           last_error = 'stale in_progress (auto reset)',
+           updated_at = ?
+       WHERE status = 'in_progress'
+         AND updated_at < ?`
+    )
+    .bind(Date.now(), cutoff)
+    .run();
+
+  return res.meta?.changes ?? 0;
+}
+
+export async function nextQueueItem(env: Env): Promise<ScrapeQueueRow | null> {
+  await resetStaleInProgress(env);
+
+  const row = await env.DB
+    .prepare(
+      `SELECT * FROM scrape_queue
+       WHERE status = 'pending'
+          OR (status = 'failed' AND attempt_count < 3)
+       ORDER BY
+         CASE status
+           WHEN 'pending' THEN 0
+           WHEN 'failed' THEN 1
+           ELSE 2
+         END,
+         id ASC
+       LIMIT 1`
+    )
+    .first<ScrapeQueueRow>();
+
+  return row ?? null;
+}
+
+export async function markQueueInProgress(
+  env: Env,
+  id: number
+): Promise<boolean> {
+  const now = Date.now();
+
+  const res = await env.DB
+    .prepare(
+      `UPDATE scrape_queue
+       SET status = 'in_progress',
+           attempt_count = attempt_count + 1,
+           updated_at = ?
+       WHERE id = ?
+         AND status != 'in_progress'`
+    )
+    .bind(now, id)
+    .run();
+
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/* ============================================================
+   QUEUE — HAPUS (sukses)
+   ============================================================ */
+
+export async function deleteQueueItem(env: Env, id: number): Promise<void> {
+  await env.DB
+    .prepare('DELETE FROM scrape_queue WHERE id = ?')
+    .bind(id)
+    .run();
+}
+
+/* ============================================================
+   QUEUE — MARK FAILED
+   ============================================================ */
+
+export async function markQueueFailed(
+  env: Env,
+  id: number,
+  error: string
+): Promise<void> {
+  const truncated = error.slice(0, 1000);
+  const now = Date.now();
+
+  await env.DB
+    .prepare(
+      `UPDATE scrape_queue
+       SET status = 'failed',
+           last_error = ?,
+           updated_at = ?
+       WHERE id = ?`
+    )
+    .bind(truncated, now, id)
+    .run();
+}
+
+/* ============================================================
+   STATS
+   ============================================================ */
+
+export interface QueueStats {
+  total: number;
+  pending: number;
+  in_progress: number;
+  failed: number;
+  failed_permanent: number;
+  total_fetched: number;
+  next_page: number;
+}
+
+export async function getQueueStats(env: Env): Promise<QueueStats> {
+  const [counts, metaFetched, metaPage] = await Promise.all([
+    env.DB
+      .prepare(
+        `SELECT
+           COUNT(*) as total,
+           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+           SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+           SUM(CASE WHEN status = 'failed' AND attempt_count < 3 THEN 1 ELSE 0 END) as failed,
+           SUM(CASE WHEN status = 'failed' AND attempt_count >= 3 THEN 1 ELSE 0 END) as failed_permanent
+         FROM scrape_queue`
+      )
+      .first<{
+        total: number;
+        pending: number;
+        in_progress: number;
+        failed: number;
+        failed_permanent: number;
+      }>(),
+    getMeta(env, 'total_fetched'),
+    getMeta(env, 'next_page'),
+  ]);
+
+  const c = counts ?? {
+    total: 0,
+    pending: 0,
+    in_progress: 0,
+    failed: 0,
+    failed_permanent: 0,
+  };
+
+  return {
+    total: c.total ?? 0,
+    pending: c.pending ?? 0,
+    in_progress: c.in_progress ?? 0,
+    failed: c.failed ?? 0,
+    failed_permanent: c.failed_permanent ?? 0,
+    total_fetched: parseInt(metaFetched ?? '0', 10),
+    next_page: parseInt(metaPage ?? '1', 10),
+  };
+}
+
+/* ============================================================
+   RESET — untuk admin manual
+   ============================================================ */
+
+export async function resetPermanentFailed(env: Env): Promise<number> {
+  const res = await env.DB
+    .prepare(
+      `UPDATE scrape_queue
+       SET status = 'pending',
+           attempt_count = 0,
+           last_error = NULL,
+           updated_at = ?
+       WHERE status = 'failed' AND attempt_count >= 3`
+    )
+    .bind(Date.now())
+    .run();
+
+  return res.meta?.changes ?? 0;
+}
+===== END FILE =====
+
+===== FILE: ./src/lib/transform.ts =====
+import type {
+  AniListMedia,
+  UnifiedCharacter,
+  UnifiedEpisode,
+  UnifiedRelation,
+  UnifiedVoiceActor,
+  FileToCommit,
+} from '../types';
+
+const CHAR_CHUNK_SIZE = 50;
+const EP_CHUNK_SIZE = 12;
+const MAX_ACTORS_PER_FILE = 500;
+
+function yamlString(s: string): string {
+  const cleaned = s.replace(/\n/g, ' ').trim();
+  const needsQuote =
+    /[:#&*!|>'"%@`{}\[\],]/.test(cleaned) ||
+    cleaned === '' ||
+    /^\d/.test(cleaned);
+  if (!needsQuote) return cleaned;
+  return `"${cleaned.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function formatDate(
+  year: number | null | undefined,
+  month: number | null | undefined,
+  day: number | null | undefined
+): string | null {
+  if (!year || !month || !day) return null;
+  const m = String(month).padStart(2, '0');
+  const d = String(day).padStart(2, '0');
+  return `${year}-${m}-${d}`;
+}
+
+function guessSeason(month: number | null): string | null {
+  if (!month) return null;
+  if (month >= 1 && month <= 3) return 'winter';
+  if (month >= 4 && month <= 6) return 'spring';
+  if (month >= 7 && month <= 9) return 'summer';
+  if (month >= 10 && month <= 12) return 'fall';
+  return null;
+}
+
+const FORMAT_MAP: Record<string, string> = {
+  TV: 'TV',
+  TV_SHORT: 'TV',
+  MOVIE: 'Movie',
+  SPECIAL: 'Special',
+  OVA: 'OVA',
+  ONA: 'ONA',
+  MUSIC: 'Music',
+  UNKNOWN: 'Unknown',
+};
+
+const STATUS_MAP: Record<string, string> = {
+  FINISHED: 'finished',
+  RELEASING: 'airing',
+  NOT_YET_RELEASED: 'upcoming',
+  CANCELLED: 'cancelled',
+  HIATUS: 'hiatus',
+};
+
+export interface MarkdownInput {
+  media: AniListMedia;
+  malId: number | null;
+  kitsuId: string | null;
+  synopsis: string;
+}
+
+export function buildMarkdown(input: MarkdownInput): string {
+  const { media, malId, kitsuId, synopsis } = input;
+  const lines: string[] = [];
+
+  lines.push('---');
+  lines.push(`title: ${yamlString(media.title.romaji || 'Unknown')}`);
+  if (media.title.english) {
+    lines.push(`titleEnglish: ${yamlString(media.title.english)}`);
+  }
+  if (media.title.native) {
+    lines.push(`titleNative: ${yamlString(media.title.native)}`);
+  }
+  lines.push('');
+
+  const effectiveMalId = malId ?? media.myanimelistId ?? null;
+  if (effectiveMalId) {
+    lines.push(`malId: ${effectiveMalId}`);
+  } else {
+    lines.push('# malId: # edit manual');
+  }
+  if (kitsuId) {
+    lines.push(`kitsuId: ${yamlString(kitsuId)}`);
+  } else {
+    lines.push('# kitsuId: # edit manual');
+  }
+  lines.push('');
+
+  lines.push(`type: ${FORMAT_MAP[media.format] ?? 'Unknown'}`);
+  lines.push(`status: ${STATUS_MAP[media.status] ?? 'finished'}`);
+
+  if (media.source) {
+    lines.push(`source: ${media.source}`);
+  } else {
+    lines.push('# source: # edit manual');
+  }
+  lines.push('');
+
+  const season = guessSeason(media.startDate.month);
+  if (season) lines.push(`season: ${season}`);
+  if (media.seasonYear) lines.push(`year: ${media.seasonYear}`);
+  if (media.episodes) lines.push(`episodes: ${media.episodes}`);
+
+  if (media.duration && media.duration > 0) {
+    lines.push(`duration: ${media.duration}`);
+  } else {
+    lines.push('# duration: # edit manual');
+  }
+
+  if (media.rating) {
+    lines.push(`rating: ${media.rating}`);
+  } else {
+    lines.push('# rating: # edit manual');
+  }
+  lines.push('');
+
+  const airedFrom = formatDate(
+    media.startDate.year,
+    media.startDate.month,
+    media.startDate.day
+  );
+  const airedTo = formatDate(
+    media.endDate?.year ?? null,
+    media.endDate?.month ?? null,
+    media.endDate?.day ?? null
+  );
+
+  lines.push('aired:');
+  if (airedFrom) {
+    lines.push(`  from: "${airedFrom}"`);
+  } else {
+    lines.push('  # from: # edit manual');
+  }
+  if (airedTo) {
+    lines.push(`  to: "${airedTo}"`);
+  } else {
+    lines.push('  # to: # edit manual');
+  }
+  lines.push('');
+
+  lines.push('stats:');
+  if (media.averageScore && media.averageScore > 0) {
+    lines.push(`  score: ${(media.averageScore / 10).toFixed(1)}`);
+  } else {
+    lines.push('  # score: # edit manual');
+  }
+  lines.push('  # scoredBy: # edit manual');
+  lines.push('');
+
+  const genres = (media.genres ?? []).map(slugify).filter(Boolean);
+  if (genres.length > 0) {
+    lines.push('genres:');
+    for (const g of genres) lines.push(`  - ${g}`);
+  } else {
+    lines.push('genres: []');
+  }
+  lines.push('');
+
+  const studios = (media.studios?.nodes ?? [])
+    .map((s) => slugify(s.name))
+    .filter(Boolean);
+  if (studios.length > 0) {
+    lines.push('studios:');
+    for (const s of studios) lines.push(`  - ${s}`);
+  } else {
+    lines.push('studios: []');
+  }
+  lines.push('');
+
+  if (media.coverImage.extraLarge) {
+    lines.push(`image: "${media.coverImage.extraLarge}"`);
+  } else {
+    lines.push('# image: # edit manual');
+  }
+
+  if (media.banner) {
+    lines.push(`banner: "${media.banner}"`);
+  } else {
+    lines.push('# banner: # edit manual');
+  }
+
+  if (media.trailer) {
+    lines.push(`trailer: "${media.trailer}"`);
+  } else {
+    lines.push('# trailer: # edit manual');
+  }
+  lines.push('');
+
+  lines.push('draft: false');
+  lines.push('---');
+  lines.push('');
+
+  const body = synopsis.trim() || '> ⚠️ Sinopsis belum tersedia.';
+  lines.push(body);
+
+  return lines.join('\n');
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  if (arr.length === 0) return [];
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+export function buildCharacterFiles(
+  slug: string,
+  characters: UnifiedCharacter[]
+): FileToCommit[] {
+  if (characters.length === 0) return [];
+
+  const sorted = [...characters].sort((a, b) => {
+    if (a.role === 'main' && b.role !== 'main') return -1;
+    if (a.role !== 'main' && b.role === 'main') return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const chunks = chunkArray(sorted, CHAR_CHUNK_SIZE);
+  const files: FileToCommit[] = [];
+
+  let cursor = 1;
+  for (const chunk of chunks) {
+    const start = cursor;
+    const end = cursor + chunk.length - 1;
+    files.push({
+      path: `data/anime/${slug}/characters/${start}-${end}.json`,
+      content: JSON.stringify(chunk, null, 2) + '\n',
+    });
+    cursor = end + 1;
+  }
+
+  return files;
+}
+
+export function buildEpisodeFiles(
+  slug: string,
+  episodes: UnifiedEpisode[]
+): FileToCommit[] {
+  if (episodes.length === 0) return [];
+
+  const sorted = [...episodes].sort((a, b) => a.number - b.number);
+  const chunks = chunkArray(sorted, EP_CHUNK_SIZE);
+  const files: FileToCommit[] = [];
+
+  for (const chunk of chunks) {
+    const first = chunk[0];
+    const last = chunk[chunk.length - 1];
+    if (!first || !last) continue;
+
+    files.push({
+      path: `data/anime/${slug}/episodes/${first.number}-${last.number}.json`,
+      content: JSON.stringify(chunk, null, 2) + '\n',
+    });
+  }
+
+  return files;
+}
+
+export function buildFranchiseFile(
+  slug: string,
+  relations: UnifiedRelation[]
+): FileToCommit | null {
+  if (relations.length === 0) return null;
+
+  return {
+    path: `data/anime/${slug}/franchises.json`,
+    content: JSON.stringify(relations, null, 2) + '\n',
+  };
+}
+
+export function buildActorFiles(
+  voiceActors: UnifiedVoiceActor[]
+): FileToCommit[] {
+  if (voiceActors.length === 0) return [];
+
+  const groups = new Map<string, UnifiedVoiceActor[]>();
+
+  for (const va of voiceActors) {
+    const first = (va.id.charAt(0) || '').toLowerCase();
+    const letter = /^[a-z]$/.test(first) ? first : '_';
+    if (!groups.has(letter)) groups.set(letter, []);
+    groups.get(letter)!.push(va);
+  }
+
+  const files: FileToCommit[] = [];
+
+  for (const [letter, items] of groups) {
+    items.sort((a, b) => a.id.localeCompare(b.id));
+
+    const chunks = chunkArray(items, MAX_ACTORS_PER_FILE);
+    if (chunks.length === 1) {
+      files.push({
+        path: `data/actors/${letter}.json`,
+        content: JSON.stringify(items, null, 2) + '\n',
+      });
+    } else {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!;
+        files.push({
+          path: `data/actors/${letter}-${i + 1}.json`,
+          content: JSON.stringify(chunk, null, 2) + '\n',
+        });
+      }
+    }
+  }
+
+  return files;
+}
+
+export interface BuildAllInput {
+  slug: string;
+  media: AniListMedia;
+  malId: number | null;
+  kitsuId: string | null;
+  synopsis: string;
+  characters: UnifiedCharacter[];
+  episodes: UnifiedEpisode[];
+  relations: UnifiedRelation[];
+  voiceActors: UnifiedVoiceActor[];
+}
+
+export interface BuildAllResult {
+  markdown: string;
+  animeFiles: FileToCommit[];
+  actorFiles: FileToCommit[];
+}
+
+export function buildAll(input: BuildAllInput): BuildAllResult {
+  const {
+    slug,
+    media,
+    malId,
+    kitsuId,
+    synopsis,
+    characters,
+    episodes,
+    relations,
+    voiceActors,
+  } = input;
+
+  const markdown = buildMarkdown({ media, malId, kitsuId, synopsis });
+
+  const animeFiles: FileToCommit[] = [];
+
+  const franchiseFile = buildFranchiseFile(slug, relations);
+  if (franchiseFile) animeFiles.push(franchiseFile);
+
+  animeFiles.push(...buildCharacterFiles(slug, characters));
+  animeFiles.push(...buildEpisodeFiles(slug, episodes));
+
+  const actorFiles = buildActorFiles(voiceActors);
+
+  return { markdown, animeFiles, actorFiles };
+}
+===== END FILE =====
+
+===== FILE: ./src/types.ts =====
+export interface Env {
+  DB: D1Database;
+
+  GH_APP_ID: string;
+  GH_APP_INSTALLATION_ID: string;
+  GH_APP_PRIVATE_KEY: string;
+
+  YUKIO_DATA_REPO: string;
+  YUKIO_DATA_BRANCH: string;
+
+  INCREMENTAL: string;
+  ANILIST_SORT: string;
+  MAX_EPISODES: string;
+  MAX_CHARACTERS: string;
+  START_PAGE: string;
+  PAGE_STEP: string;
+}
+
+export interface ScrapeQueueRow {
+  id: number;
+  anilist_id: number;
+  slug: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'failed';
+  attempt_count: number;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ScrapeMetaRow {
+  key: string;
+  value: string;
+  updated_at: number;
+}
+
+export interface AniListTitle {
+  romaji: string;
+  english: string | null;
+  native: string | null;
+}
+
+export interface AniListCover {
+  extraLarge: string;
+  large: string;
+}
+
+export interface AniListDate {
+  year: number | null;
+  month: number | null;
+  day: number | null;
+}
+
+export interface AniListStudio {
+  name: string;
+}
+
+export interface AniListMedia {
+  id: number;
+  title: AniListTitle;
+  coverImage: AniListCover;
+  description: string | null;
+  format: string;
+  status: string;
+  seasonYear: number | null;
+  episodes: number | null;
+  genres: string[];
+  averageScore: number | null;
+  studios: { nodes: AniListStudio[] };
+  startDate: AniListDate;
+
+  duration?: number | null;
+  rating?: string | null;
+  endDate?: AniListDate | null;
+  banner?: string | null;
+  trailer?: string | null;
+  franchise?: string | null;
+  myanimelistId?: number | null;
+  source?: string | null;
+}
+
+export interface AniListTopItem {
+  id: number;
+  idMal: number | null;
+  title: AniListTitle;
+  format: string;
+}
+
+export interface UnifiedVoiceActor {
+  id: string;
+  name: string;
+  nameNative?: string;
+  image?: string;
+  defaultLanguage?: string;
+}
+
+export interface UnifiedCharacter {
+  name: string;
+  nameNative?: string;
+  image?: string;
+  role: 'main' | 'supporting' | 'background';
+  voiceActors: string[];
+}
+
+export interface UnifiedEpisode {
+  number: number;
+  title: string;
+  aired?: string;
+  duration?: number;
+}
+
+export interface UnifiedRelation {
+  relation: string;
+  slug: string;
+  title: string;
+}
+
+export interface FileToCommit {
+  path: string;
+  content: string;
+}
+
+export interface CommitResult {
+  ok: boolean;
+  sha?: string;
+  commitUrl?: string;
+  error?: string;
+}
+
+===== END FILE =====
+
+===== FILE: ./tsconfig.json =====
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022"],
+    "module": "es2022",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/workers-types"],
+
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    "skipLibCheck": true
+  },
+  "include": [
+    "worker-configuration.d.ts",
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".wrangler"
+  ]
+}
+===== END FILE =====
+
+===== FILE: ./wrangler.toml =====
+#:schema node_modules/wrangler/config-schema.json
+
+name = "yukio-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-08"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "yukio-ratings-db"
+database_id = "84b22e1e-29ae-437c-b7ec-63337c7387d1"
+
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true
+
+[vars]
+YUKIO_DATA_REPO = "bimaakbar-dev/yukio-data"
+YUKIO_DATA_BRANCH = "main"
+ANILIST_SORT = "popular"
+MAX_EPISODES = "100"
+MAX_CHARACTERS = "100"
+START_PAGE = "1"
+PAGE_STEP = "2"
+
+[dev]
+port = 8787
+local_protocol = "http"
+
+===== END FILE =====
