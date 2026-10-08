@@ -1,3 +1,9 @@
+<div align="center">
+
+[![Cron Scrape](https://github.com/bimaakbar-dev/yukio-api/actions/workflows/scrape.yml/badge.svg)](https://github.com/bimaakbar-dev/yukio-api/actions/workflows/scrape.yml)
+
+</div>
+
 # yukio-api
 
 Anime scraper untuk [Yukionime](https://yukionime.pages.dev).
