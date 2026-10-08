@@ -2,10 +2,6 @@ import type { Env, ScrapeQueueRow } from '../types';
 
 const IN_PROGRESS_STALE_MS = 10 * 60 * 1000;
 
-/* ============================================================
-   META
-   ============================================================ */
-
 export async function getMeta(env: Env, key: string): Promise<string | null> {
   const row = await env.DB
     .prepare('SELECT value FROM scrape_meta WHERE key = ?')
@@ -31,10 +27,6 @@ export async function setMeta(
     .bind(key, value, Date.now())
     .run();
 }
-
-/* ============================================================
-   QUEUE — INSERT (refill)
-   ============================================================ */
 
 export interface QueueInsertItem {
   anilistId: number;
@@ -64,10 +56,6 @@ export async function insertQueue(
 
   return items.length;
 }
-
-/* ============================================================
-   QUEUE — AMBIL NEXT
-   ============================================================ */
 
 export async function getQueuePendingCount(env: Env): Promise<number> {
   const row = await env.DB
@@ -149,20 +137,12 @@ export async function markQueueInProgress(
   return (res.meta?.changes ?? 0) > 0;
 }
 
-/* ============================================================
-   QUEUE — HAPUS (sukses)
-   ============================================================ */
-
 export async function deleteQueueItem(env: Env, id: number): Promise<void> {
   await env.DB
     .prepare('DELETE FROM scrape_queue WHERE id = ?')
     .bind(id)
     .run();
 }
-
-/* ============================================================
-   QUEUE — MARK FAILED
-   ============================================================ */
 
 export async function markQueueFailed(
   env: Env,
@@ -183,10 +163,6 @@ export async function markQueueFailed(
     .bind(truncated, now, id)
     .run();
 }
-
-/* ============================================================
-   STATS
-   ============================================================ */
 
 export interface QueueStats {
   total: number;
@@ -240,10 +216,6 @@ export async function getQueueStats(env: Env): Promise<QueueStats> {
   };
 }
 
-/* ============================================================
-   RESET — untuk admin manual
-   ============================================================ */
-
 export async function resetPermanentFailed(env: Env): Promise<number> {
   const res = await env.DB
     .prepare(
@@ -258,4 +230,31 @@ export async function resetPermanentFailed(env: Env): Promise<number> {
     .run();
 
   return res.meta?.changes ?? 0;
+}
+
+export interface FailedItem {
+  id: number;
+  slug: string;
+  title: string;
+  attempt_count: number;
+  last_error: string | null;
+  updated_at: number;
+}
+
+export async function getFailedItems(
+  env: Env,
+  limit = 50
+): Promise<FailedItem[]> {
+  const res = await env.DB
+    .prepare(
+      `SELECT id, slug, title, attempt_count, last_error, updated_at
+       FROM scrape_queue
+       WHERE status = 'failed'
+       ORDER BY updated_at DESC
+       LIMIT ?`
+    )
+    .bind(limit)
+    .all<FailedItem>();
+
+  return res.results ?? [];
 }
