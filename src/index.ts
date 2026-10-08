@@ -1,6 +1,6 @@
 import type { Env } from './types';
 import { runScrapeCron } from './handlers/cron';
-import { getQueueStats, resetPermanentFailed } from './lib/state';
+import { getQueueStats, resetPermanentFailed, getFailedItems } from './lib/state';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
