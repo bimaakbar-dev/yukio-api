@@ -20,8 +20,10 @@ export interface RatingAggregate {
 export interface RatingData {
   animeId: string;
   average: number;
+  rawAverage: number;
   votes: number;
   userScore: number | null;
+  provisional: boolean;
 }
 
 export interface ApiSuccess<T> {
