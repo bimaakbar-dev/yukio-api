@@ -1,23 +1,28 @@
 {
   "compilerOptions": {
-    "target": "es2024",
-    "lib": ["es2024"],
+    "target": "es2022",
+    "lib": ["es2022"],
     "module": "es2022",
     "moduleResolution": "Bundler",
     "types": ["@cloudflare/workers-types"],
+
     "resolveJsonModule": true,
-    "allowJs": true,
-    "checkJs": false,
+    "allowJs": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
+
     "noEmit": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+
     "strict": true,
-    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
     "skipLibCheck": true
   },
   "include": [
