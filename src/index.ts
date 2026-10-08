@@ -1,29 +1,3 @@
-// ────────────────────────────────────────────────────────
-// Worker yukio-api — Entry point
-// ────────────────────────────────────────────────────────
-//
-// Endpoint:
-//   GET    /api/v1/ratings/:id   — ambil rating 1 anime (+ user vote)
-//   POST   /api/v1/ratings/:id   — submit rating (score 1-5)
-//   DELETE /api/v1/ratings/:id   — hapus rating user
-//   GET    /api/v1/ratings       — ambil semua rating (untuk sync/audit)
-//   OPTIONS *                    — CORS preflight
-//
-// Auth:
-//   User ID dari cookie `vid` (UUID v4). Generate otomatis
-//   kalau belum ada, set sebagai HttpOnly cookie.
-//   Tidak ada login — anonymous tracking.
-//
-// CORS:
-//   Whitelist dari env.ALLOWED_ORIGINS (comma-separated).
-//   Tidak pakai wildcard — biar tidak di-embed orang lain.
-//
-// Response format:
-//   Sukses: { data: ..., meta: { version, generatedAt } }
-//   Error:  { error: { code, message, status } }
-// ────────────────────────────────────────────────────────
-
-import { parse as parseCookie, serialize as serializeCookie } from 'cookie';
 import type { Env, RequestContext } from './types.js';
 import {
   getRatingData,
@@ -32,24 +6,13 @@ import {
   deleteRating,
 } from './db.js';
 
-// ────────────────────────────────────────────────────────
-// Constants
-// ────────────────────────────────────────────────────────
-
 const API_VERSION = 'v1';
-const COOKIE_NAME = 'vid'; // visitor id
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 2; // 2 tahun
 const SCORE_MIN = 1;
 const SCORE_MAX = 5;
+const USER_ID_HEADER = 'X-User-Id';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// ────────────────────────────────────────────────────────
-// Helpers — Response
-// ────────────────────────────────────────────────────────
-
-function jsonResponse(
-  data: unknown,
-  init: ResponseInit = {}
-): Response {
+function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
   const body = {
     data,
     meta: {
@@ -74,9 +37,7 @@ function errorResponse(
   status = 400,
   extraHeaders: HeadersInit = {}
 ): Response {
-  const body = {
-    error: { code, message, status },
-  };
+  const body = { error: { code, message, status } };
 
   return new Response(JSON.stringify(body, null, 2), {
     status,
@@ -88,13 +49,8 @@ function errorResponse(
   });
 }
 
-// ────────────────────────────────────────────────────────
-// Helpers — CORS
-// ────────────────────────────────────────────────────────
-
 function getAllowedOrigins(env: Env): string[] {
-  return env.ALLOWED_ORIGINS
-    .split(',')
+  return env.ALLOWED_ORIGINS.split(',')
     .map((o) => o.trim())
     .filter(Boolean);
 }
@@ -107,83 +63,30 @@ function buildCorsHeaders(
 
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
   };
 
   if (isAllowed && origin) {
     headers['Access-Control-Allow-Origin'] = origin;
-    headers['Access-Control-Allow-Credentials'] = 'true';
   }
 
   return headers;
 }
 
-// ────────────────────────────────────────────────────────
-// Helpers — Auth (cookie)
-// ────────────────────────────────────────────────────────
-
-function generateUserId(): string {
-  return crypto.randomUUID();
-}
-
-function parseAuthCookie(request: Request): string | null {
-  const cookieHeader = request.headers.get('Cookie');
-  if (!cookieHeader) return null;
-
-  const cookies = parseCookie(cookieHeader);
-  return cookies[COOKIE_NAME] ?? null;
-}
-
-function buildUserIdCookie(userId: string): string {
-  return serializeCookie(COOKIE_NAME, userId, {
-    path: '/',
-    maxAge: COOKIE_MAX_AGE,
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-  });
-}
-
-/**
- * Resolve user ID dari cookie. Kalau tidak ada, generate baru.
- * Return juga flag isNewUser supaya handler tahu harus set cookie.
- */
 function resolveUser(request: Request): RequestContext {
-  const existing = parseAuthCookie(request);
+  const headerValue = request.headers.get(USER_ID_HEADER);
   const origin = request.headers.get('Origin');
 
-  if (existing) {
-    return { userId: existing, isNewUser: false, origin };
+  if (headerValue && UUID_RE.test(headerValue)) {
+    return { userId: headerValue, origin };
   }
 
-  return { userId: generateUserId(), isNewUser: true, origin };
+  return { userId: '', origin };
 }
-
-/**
- * Append Set-Cookie header ke response kalau user baru.
- * Immutable: return Response baru (Response di Workers immutable).
- */
-function withUserCookie(response: Response, ctx: RequestContext): Response {
-  if (!ctx.isNewUser) return response;
-
-  const newHeaders = new Headers(response.headers);
-  newHeaders.append('Set-Cookie', buildUserIdCookie(ctx.userId));
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: newHeaders,
-  });
-}
-
-// ────────────────────────────────────────────────────────
-// Helpers — Validation
-// ────────────────────────────────────────────────────────
 
 function isValidAnimeId(id: string): boolean {
-  // Slug: lowercase-kebab-case, 1-200 char
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) && id.length <= 200;
 }
 
@@ -196,10 +99,6 @@ function isValidScore(score: unknown): score is number {
   );
 }
 
-// ────────────────────────────────────────────────────────
-// Handlers
-// ────────────────────────────────────────────────────────
-
 async function handleGetOne(
   animeId: string,
   env: Env,
@@ -211,11 +110,7 @@ async function handleGetOne(
   }
 
   const data = await getRatingData(env.DB, animeId, ctx.userId);
-
-  return withUserCookie(
-    jsonResponse(data, { headers: corsHeaders }),
-    ctx
-  );
+  return jsonResponse(data, { headers: corsHeaders });
 }
 
 async function handlePost(
@@ -225,6 +120,15 @@ async function handlePost(
   ctx: RequestContext,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
+  if (!ctx.userId) {
+    return errorResponse(
+      'MISSING_USER_ID',
+      `Header ${USER_ID_HEADER} wajib ada dan berisi UUID v4 yang valid`,
+      400,
+      corsHeaders
+    );
+  }
+
   if (!isValidAnimeId(animeId)) {
     return errorResponse('INVALID_ID', 'Format anime id tidak valid', 400, corsHeaders);
   }
@@ -255,11 +159,7 @@ async function handlePost(
   }
 
   const data = await getRatingData(env.DB, animeId, ctx.userId);
-
-  return withUserCookie(
-    jsonResponse(data, { headers: corsHeaders }),
-    ctx
-  );
+  return jsonResponse(data, { headers: corsHeaders });
 }
 
 async function handleDelete(
@@ -268,6 +168,10 @@ async function handleDelete(
   ctx: RequestContext,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
+  if (!ctx.userId) {
+    return errorResponse('MISSING_USER_ID', `Header ${USER_ID_HEADER} wajib ada`, 400, corsHeaders);
+  }
+
   if (!isValidAnimeId(animeId)) {
     return errorResponse('INVALID_ID', 'Format anime id tidak valid', 400, corsHeaders);
   }
@@ -280,11 +184,7 @@ async function handleDelete(
   }
 
   const data = await getRatingData(env.DB, animeId, ctx.userId);
-
-  return withUserCookie(
-    jsonResponse(data, { headers: corsHeaders }),
-    ctx
-  );
+  return jsonResponse(data, { headers: corsHeaders });
 }
 
 async function handleGetAll(
@@ -306,17 +206,10 @@ async function handleGetAll(
   return jsonResponse(data, { headers: corsHeaders });
 }
 
-// ────────────────────────────────────────────────────────
-// Router
-// ────────────────────────────────────────────────────────
-
 const RATINGS_ONE = /^\/api\/v1\/ratings\/([^/]+)\/?$/;
 const RATINGS_ALL = /^\/api\/v1\/ratings\/?$/;
 
-async function route(
-  request: Request,
-  env: Env
-): Promise<Response> {
+async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
@@ -325,15 +218,10 @@ async function route(
   const allowedOrigins = getAllowedOrigins(env);
   const corsHeaders = buildCorsHeaders(origin, allowedOrigins);
 
-  // CORS preflight
   if (method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: corsHeaders,
-    });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  // Resolve user context (cookie) — dipakai di semua GET/POST/DELETE
   const ctx = resolveUser(request);
 
   const oneMatch = path.match(RATINGS_ONE);
@@ -342,15 +230,9 @@ async function route(
   if (oneMatch) {
     const animeId = oneMatch[1]!;
 
-    if (method === 'GET') {
-      return handleGetOne(animeId, env, ctx, corsHeaders);
-    }
-    if (method === 'POST') {
-      return handlePost(animeId, request, env, ctx, corsHeaders);
-    }
-    if (method === 'DELETE') {
-      return handleDelete(animeId, env, ctx, corsHeaders);
-    }
+    if (method === 'GET') return handleGetOne(animeId, env, ctx, corsHeaders);
+    if (method === 'POST') return handlePost(animeId, request, env, ctx, corsHeaders);
+    if (method === 'DELETE') return handleDelete(animeId, env, ctx, corsHeaders);
 
     return errorResponse('METHOD_NOT_ALLOWED', `Method ${method} tidak didukung`, 405, corsHeaders);
   }
@@ -361,10 +243,6 @@ async function route(
 
   return errorResponse('NOT_FOUND', `Endpoint tidak ditemukan: ${path}`, 404, corsHeaders);
 }
-
-// ────────────────────────────────────────────────────────
-// Entry
-// ────────────────────────────────────────────────────────
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
