@@ -12,7 +12,6 @@ import {
 import { buildAll } from '../lib/transform';
 import { generateSynopsis } from '../lib/ai';
 import {
-  githubCommitFile,
   githubCommitMultipleFiles,
   githubGetFile,
 } from '../lib/github';
@@ -412,18 +411,4 @@ export async function runScrapeCron(env: Env): Promise<CronRunResult> {
    MANUAL RUN — untuk endpoint /admin/scrape
    ============================================================ */
 
-export async function runScrapeManual(
-  env: Env,
-  limit: number
-): Promise<CronRunResult> {
-  const originalBatch = env.BATCH_SIZE;
-  env.BATCH_SIZE = String(limit);
 
-  try {
-    return await runScrapeCron(env);
-  } finally {
-    env.BATCH_SIZE = originalBatch;
-  }
-}
-
-void githubCommitFile;

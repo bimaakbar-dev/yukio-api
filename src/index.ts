@@ -33,7 +33,9 @@ export default {
         try {
           const result = await runScrapeCron(env);
           console.log(
-            `[Cron] done — success=${result.succeeded}, failed=${result.failed}, skipped=${result.skipped}`
+            '[Cron] done - success=' + result.succeeded +
+            ', failed=' + result.failed +
+            ', skipped=' + result.skipped
           );
         } catch (err) {
           console.error('[Cron] failed:', err);
