@@ -25,7 +25,7 @@ import {
 const REFILL_THRESHOLD = 100;
 const DEFAULT_MAX_EPISODES = 100;
 const DEFAULT_MAX_CHARACTERS = 100;
-const RACE_RETRY_DELAY_MS = 2000;
+const RACE_MAX_RETRY = 5;
 
 function stripHtml(s: string): string {
   return s
@@ -44,6 +44,37 @@ function stripHtml(s: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomDelay(baseMs: number): number {
+  return baseMs + Math.floor(Math.random() * 2000);
+}
+
+async function commitWithRetry(
+  env: Env,
+  files: FileToCommit[],
+  message: string
+): Promise<{ ok: boolean; error?: string }> {
+  let lastError = '';
+
+  for (let attempt = 0; attempt < RACE_MAX_RETRY; attempt++) {
+    const result = await githubCommitMultipleFiles(env, files, message);
+
+    if (result.ok) {
+      return { ok: true };
+    }
+
+    lastError = result.error ?? 'unknown';
+
+    if (!lastError.includes('RACE_CONDITION')) {
+      return { ok: false, error: lastError };
+    }
+
+    const delay = randomDelay(1000 + attempt * 500);
+    await sleep(delay);
+  }
+
+  return { ok: false, error: lastError };
 }
 
 async function refillQueue(env: Env): Promise<number> {
@@ -128,12 +159,7 @@ async function scrapeOne(
 
   const commitMsg = `feat(${slug}): scrape from AniList`;
 
-  let result = await githubCommitMultipleFiles(env, files, commitMsg);
-
-  if (!result.ok && result.error?.includes('RACE_CONDITION')) {
-    await sleep(RACE_RETRY_DELAY_MS);
-    result = await githubCommitMultipleFiles(env, files, `${commitMsg} (retry)`);
-  }
+  const result = await commitWithRetry(env, files, commitMsg);
 
   if (!result.ok) {
     return {
@@ -212,12 +238,7 @@ async function mergeActorFiles(
   if (files.length === 0) return { ok: true, files: 0 };
 
   const commitMsg = `chore(actors): update ${files.length} file(s)`;
-  let r = await githubCommitMultipleFiles(env, files, commitMsg);
-
-  if (!r.ok && r.error?.includes('RACE_CONDITION')) {
-    await sleep(RACE_RETRY_DELAY_MS);
-    r = await githubCommitMultipleFiles(env, files, `${commitMsg} (retry)`);
-  }
+  const r = await commitWithRetry(env, files, commitMsg);
 
   return r.ok ? { ok: true, files: files.length } : { ok: false, files: 0, error: r.error };
 }
