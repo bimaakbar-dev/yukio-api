@@ -1,151 +1,91 @@
-import type {
-  Env,
-  ScrapeStateRow,
-  ScrapeStatus,
-  YukionimeListItem,
-} from '../types';
+import type { Env, ScrapeQueueRow } from '../types';
 
 const IN_PROGRESS_STALE_MS = 10 * 60 * 1000;
 
 /* ============================================================
-   YUKIONIME LIST — fetch daftar anime dari frontend
+   META
    ============================================================ */
 
-export async function fetchYukionimeList(
-  env: Env
-): Promise<YukionimeListItem[]> {
-  const res = await fetch(env.YUKIONIME_API, {
-    headers: { Accept: 'application/json' },
-  });
+export async function getMeta(env: Env, key: string): Promise<string | null> {
+  const row = await env.DB
+    .prepare('SELECT value FROM scrape_meta WHERE key = ?')
+    .bind(key)
+    .first<{ value: string }>();
 
-  if (!res.ok) {
-    throw new Error(`Yukionime API HTTP ${res.status}`);
-  }
+  return row?.value ?? null;
+}
 
-  const json = (await res.json()) as { data?: YukionimeListItem[] };
-  return json.data ?? [];
+export async function setMeta(
+  env: Env,
+  key: string,
+  value: string
+): Promise<void> {
+  await env.DB
+    .prepare(
+      `INSERT INTO scrape_meta (key, value, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value = excluded.value,
+         updated_at = excluded.updated_at`
+    )
+    .bind(key, value, Date.now())
+    .run();
 }
 
 /* ============================================================
-   SEED — pastikan semua slug ada di scrape_state
+   QUEUE — INSERT (refill)
    ============================================================ */
 
-export async function seedAnimeList(
+export interface QueueInsertItem {
+  anilistId: number;
+  slug: string;
+  title: string;
+}
+
+export async function insertQueue(
   env: Env,
-  items: YukionimeListItem[]
+  items: QueueInsertItem[]
 ): Promise<number> {
   if (items.length === 0) return 0;
 
   const now = Date.now();
-  let inserted = 0;
 
-  const existing = await env.DB
-    .prepare('SELECT slug FROM scrape_state')
-    .all<{ slug: string }>();
-
-  const existingSet = new Set((existing.results ?? []).map((r) => r.slug));
-
-  const newSlugs = items
-    .map((i) => i.id)
-    .filter((slug) => slug && !existingSet.has(slug));
-
-  if (newSlugs.length === 0) return 0;
-
-  const stmts = newSlugs.map((slug) =>
+  const stmts = items.map((item) =>
     env.DB
       .prepare(
-        `INSERT OR IGNORE INTO scrape_state
-          (slug, status, file_count, files_json, attempt_count, created_at, updated_at)
-         VALUES (?, 'pending', 0, '[]', 0, ?, ?)`
+        `INSERT OR IGNORE INTO scrape_queue
+          (anilist_id, slug, title, status, attempt_count, created_at, updated_at)
+         VALUES (?, ?, ?, 'pending', 0, ?, ?)`
       )
-      .bind(slug, now, now)
+      .bind(item.anilistId, item.slug, item.title, now, now)
   );
 
   await env.DB.batch(stmts);
-  inserted = newSlugs.length;
 
-  return inserted;
+  return items.length;
 }
 
 /* ============================================================
-   GET — ambil slug berikutnya untuk di-scrape
+   QUEUE — AMBIL NEXT
    ============================================================ */
 
-interface ScrapeRowMinimal {
-  slug: string;
+export async function getQueuePendingCount(env: Env): Promise<number> {
+  const row = await env.DB
+    .prepare(
+      `SELECT COUNT(*) as c FROM scrape_queue
+       WHERE status = 'pending' OR (status = 'failed' AND attempt_count < 3)`
+    )
+    .first<{ c: number }>();
+
+  return row?.c ?? 0;
 }
 
-export async function getNextBatch(
-  env: Env,
-  batchSize: number,
-  incremental: boolean,
-  ttlDays: number
-): Promise<string[]> {
-  await resetStaleInProgress(env);
+export async function getQueueTotal(env: Env): Promise<number> {
+  const row = await env.DB
+    .prepare('SELECT COUNT(*) as c FROM scrape_queue')
+    .first<{ c: number }>();
 
-  if (incremental) {
-    const cutoff = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
-
-    const res = await env.DB
-      .prepare(
-        `SELECT slug FROM scrape_state
-         WHERE status = 'pending'
-            OR (status = 'failed' AND attempt_count < 3)
-            OR (status = 'success' AND (last_success_at IS NULL OR last_success_at < ?))
-         ORDER BY
-           CASE status
-             WHEN 'pending' THEN 0
-             WHEN 'failed' THEN 1
-             WHEN 'success' THEN 2
-             ELSE 3
-           END,
-           created_at ASC
-         LIMIT ?`
-      )
-      .bind(cutoff, batchSize)
-      .all<ScrapeRowMinimal>();
-
-    return (res.results ?? []).map((r) => r.slug);
-  }
-
-  const res = await env.DB
-    .prepare(
-      `SELECT slug FROM scrape_state
-       WHERE status = 'pending'
-          OR (status = 'failed' AND attempt_count < 3)
-       ORDER BY created_at ASC
-       LIMIT ?`
-    )
-    .bind(batchSize)
-    .all<ScrapeRowMinimal>();
-
-  return (res.results ?? []).map((r) => r.slug);
-}
-
-/* ============================================================
-   LOCK / UNLOCK
-   ============================================================ */
-
-export async function markInProgress(
-  env: Env,
-  slug: string
-): Promise<boolean> {
-  const now = Date.now();
-
-  const res = await env.DB
-    .prepare(
-      `UPDATE scrape_state
-       SET status = 'in_progress',
-           attempt_count = attempt_count + 1,
-           last_scraped_at = ?,
-           updated_at = ?
-       WHERE slug = ?
-         AND status != 'in_progress'`
-    )
-    .bind(now, now, slug)
-    .run();
-
-  return (res.meta?.changes ?? 0) > 0;
+  return row?.c ?? 0;
 }
 
 export async function resetStaleInProgress(env: Env): Promise<number> {
@@ -153,12 +93,12 @@ export async function resetStaleInProgress(env: Env): Promise<number> {
 
   const res = await env.DB
     .prepare(
-      `UPDATE scrape_state
-       SET status = 'failed',
-           last_error = 'stale in_progress (reset by cleanup)',
+      `UPDATE scrape_queue
+       SET status = 'pending',
+           last_error = 'stale in_progress (auto reset)',
            updated_at = ?
        WHERE status = 'in_progress'
-         AND last_scraped_at < ?`
+         AND updated_at < ?`
     )
     .bind(Date.now(), cutoff)
     .run();
@@ -166,169 +106,156 @@ export async function resetStaleInProgress(env: Env): Promise<number> {
   return res.meta?.changes ?? 0;
 }
 
-/* ============================================================
-   MARK RESULT
-   ============================================================ */
+export async function nextQueueItem(env: Env): Promise<ScrapeQueueRow | null> {
+  await resetStaleInProgress(env);
 
-export interface MarkSuccessInput {
-  slug: string;
-  sourceUsed: string;
-  files: string[];
-}
-
-export async function markSuccess(
-  env: Env,
-  input: MarkSuccessInput
-): Promise<void> {
-  const now = Date.now();
-
-  await env.DB
-    .prepare(
-      `UPDATE scrape_state
-       SET status = 'success',
-           source_used = ?,
-           file_count = ?,
-           files_json = ?,
-           last_error = NULL,
-           last_success_at = ?,
-           first_scraped_at = COALESCE(first_scraped_at, ?),
-           updated_at = ?
-       WHERE slug = ?`
-    )
-    .bind(
-      input.sourceUsed,
-      input.files.length,
-      JSON.stringify(input.files),
-      now,
-      now,
-      now,
-      input.slug
-    )
-    .run();
-}
-
-export async function markFailed(
-  env: Env,
-  slug: string,
-  error: string
-): Promise<void> {
-  const now = Date.now();
-  const truncatedError = error.slice(0, 1000);
-
-  await env.DB
-    .prepare(
-      `UPDATE scrape_state
-       SET status = 'failed',
-           last_error = ?,
-           first_scraped_at = COALESCE(first_scraped_at, ?),
-           updated_at = ?
-       WHERE slug = ?`
-    )
-    .bind(truncatedError, now, now, slug)
-    .run();
-}
-
-export async function markSkipped(
-  env: Env,
-  slug: string,
-  reason: string
-): Promise<void> {
-  const now = Date.now();
-
-  await env.DB
-    .prepare(
-      `UPDATE scrape_state
-       SET status = 'skipped',
-           last_error = ?,
-           updated_at = ?
-       WHERE slug = ?`
-    )
-    .bind(reason.slice(0, 500), now, slug)
-    .run();
-}
-
-/* ============================================================
-   STATS / READ
-   ============================================================ */
-
-export interface StatsSummary {
-  total: number;
-  pending: number;
-  in_progress: number;
-  success: number;
-  failed: number;
-  skipped: number;
-}
-
-export async function getStats(env: Env): Promise<StatsSummary> {
-  const res = await env.DB
-    .prepare(
-      `SELECT status, COUNT(*) as count
-       FROM scrape_state
-       GROUP BY status`
-    )
-    .all<{ status: ScrapeStatus; count: number }>();
-
-  const summary: StatsSummary = {
-    total: 0,
-    pending: 0,
-    in_progress: 0,
-    success: 0,
-    failed: 0,
-    skipped: 0,
-  };
-
-  for (const row of res.results ?? []) {
-    summary[row.status] = row.count;
-    summary.total += row.count;
-  }
-
-  return summary;
-}
-
-export async function getScrapeState(
-  env: Env,
-  slug: string
-): Promise<ScrapeStateRow | null> {
   const row = await env.DB
-    .prepare('SELECT * FROM scrape_state WHERE slug = ?')
-    .bind(slug)
-    .first<ScrapeStateRow>();
+    .prepare(
+      `SELECT * FROM scrape_queue
+       WHERE status = 'pending'
+          OR (status = 'failed' AND attempt_count < 3)
+       ORDER BY
+         CASE status
+           WHEN 'pending' THEN 0
+           WHEN 'failed' THEN 1
+           ELSE 2
+         END,
+         id ASC
+       LIMIT 1`
+    )
+    .first<ScrapeQueueRow>();
 
   return row ?? null;
 }
 
-/* ============================================================
-   LOG
-   ============================================================ */
+export async function markQueueInProgress(
+  env: Env,
+  id: number
+): Promise<boolean> {
+  const now = Date.now();
 
-export interface LogInput {
-  durationMs: number;
-  totalAvailable: number;
-  batchSize: number;
-  succeeded: number;
-  failed: number;
-  skipped: number;
-  errors: string[];
+  const res = await env.DB
+    .prepare(
+      `UPDATE scrape_queue
+       SET status = 'in_progress',
+           attempt_count = attempt_count + 1,
+           updated_at = ?
+       WHERE id = ?
+         AND status != 'in_progress'`
+    )
+    .bind(now, id)
+    .run();
+
+  return (res.meta?.changes ?? 0) > 0;
 }
 
-export async function writeLog(env: Env, input: LogInput): Promise<void> {
+/* ============================================================
+   QUEUE — HAPUS (sukses)
+   ============================================================ */
+
+export async function deleteQueueItem(env: Env, id: number): Promise<void> {
+  await env.DB
+    .prepare('DELETE FROM scrape_queue WHERE id = ?')
+    .bind(id)
+    .run();
+}
+
+/* ============================================================
+   QUEUE — MARK FAILED
+   ============================================================ */
+
+export async function markQueueFailed(
+  env: Env,
+  id: number,
+  error: string
+): Promise<void> {
+  const truncated = error.slice(0, 1000);
+  const now = Date.now();
+
   await env.DB
     .prepare(
-      `INSERT INTO scrape_log
-        (run_at, duration_ms, total_available, batch_size,
-         succeeded, failed, skipped, errors_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `UPDATE scrape_queue
+       SET status = 'failed',
+           last_error = ?,
+           updated_at = ?
+       WHERE id = ?`
     )
-    .bind(
-      Date.now(),
-      input.durationMs,
-      input.totalAvailable,
-      input.batchSize,
-      input.succeeded,
-      input.failed,
-      input.skipped,
-      JSON.stringify(input.errors.slice(0, 20))
-    )
+    .bind(truncated, now, id)
     .run();
+}
+
+/* ============================================================
+   STATS
+   ============================================================ */
+
+export interface QueueStats {
+  total: number;
+  pending: number;
+  in_progress: number;
+  failed: number;
+  failed_permanent: number;
+  total_fetched: number;
+  next_page: number;
+}
+
+export async function getQueueStats(env: Env): Promise<QueueStats> {
+  const [counts, metaFetched, metaPage] = await Promise.all([
+    env.DB
+      .prepare(
+        `SELECT
+           COUNT(*) as total,
+           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+           SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+           SUM(CASE WHEN status = 'failed' AND attempt_count < 3 THEN 1 ELSE 0 END) as failed,
+           SUM(CASE WHEN status = 'failed' AND attempt_count >= 3 THEN 1 ELSE 0 END) as failed_permanent
+         FROM scrape_queue`
+      )
+      .first<{
+        total: number;
+        pending: number;
+        in_progress: number;
+        failed: number;
+        failed_permanent: number;
+      }>(),
+    getMeta(env, 'total_fetched'),
+    getMeta(env, 'next_page'),
+  ]);
+
+  const c = counts ?? {
+    total: 0,
+    pending: 0,
+    in_progress: 0,
+    failed: 0,
+    failed_permanent: 0,
+  };
+
+  return {
+    total: c.total ?? 0,
+    pending: c.pending ?? 0,
+    in_progress: c.in_progress ?? 0,
+    failed: c.failed ?? 0,
+    failed_permanent: c.failed_permanent ?? 0,
+    total_fetched: parseInt(metaFetched ?? '0', 10),
+    next_page: parseInt(metaPage ?? '1', 10),
+  };
+}
+
+/* ============================================================
+   RESET — untuk admin manual
+   ============================================================ */
+
+export async function resetPermanentFailed(env: Env): Promise<number> {
+  const res = await env.DB
+    .prepare(
+      `UPDATE scrape_queue
+       SET status = 'pending',
+           attempt_count = 0,
+           last_error = NULL,
+           updated_at = ?
+       WHERE status = 'failed' AND attempt_count >= 3`
+    )
+    .bind(Date.now())
+    .run();
+
+  return res.meta?.changes ?? 0;
 }
