@@ -31,6 +31,15 @@ export default {
         );
       }
     }
+if (url.pathname === '/errors') {
+  const limit = Math.min(
+    parseInt(url.searchParams.get('limit') ?? '50', 10),
+    200
+  );
+  const items = await getFailedItems(env, limit);
+  return Response.json({ total: items.length, items });
+}
+
 
     if (url.pathname === '/reset-failed') {
       const reset = await resetPermanentFailed(env);
