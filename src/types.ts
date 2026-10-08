@@ -9,6 +9,9 @@ export interface Env {
   ANILIST_SORT: string;
   MAX_EPISODES: string;
   MAX_CHARACTERS: string;
+
+  START_PAGE: string;
+  PAGE_STEP: string;
 }
 
 export interface ScrapeQueueRow {
