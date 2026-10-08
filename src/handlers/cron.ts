@@ -4,35 +4,92 @@ import type {
   FileToCommit,
 } from '../types';
 import {
-  chainSearch,
+  fetchAniListTop,
+  fetchAniListById,
   fetchCharactersFromAniList,
   fetchRelationsFromShikimori,
   fetchEpisodesFromKitsu,
+  searchKitsuId,
+  slugify,
 } from '../lib/sources';
 import { buildAll } from '../lib/transform';
-import { generateSynopsis } from '../lib/ai';
+import { githubCommitMultipleFiles, githubGetFile } from '../lib/github';
 import {
-  githubCommitMultipleFiles,
-  githubGetFile,
-} from '../lib/github';
-import {
-  fetchYukionimeList,
-  seedAnimeList,
-  getNextBatch,
-  markInProgress,
-  markSuccess,
-  markFailed,
-  getStats,
-  writeLog,
+  getMeta,
+  setMeta,
+  insertQueue,
+  getQueuePendingCount,
+  nextQueueItem,
+  markQueueInProgress,
+  deleteQueueItem,
+  markQueueFailed,
+  getQueueStats,
 } from '../lib/state';
 
-const DEFAULT_BATCH = 8;
-const DEFAULT_TIMEOUT_MS = 20000;
+const REFILL_THRESHOLD = 100;
+const PAGE_SIZE = 50;
+const DEFAULT_MAX_EPISODES = 100;
+const DEFAULT_MAX_CHARACTERS = 100;
 
-interface ScrapeOneResult {
+/* ============================================================
+   REFILL — fetch dari AniList, insert ke queue
+   ============================================================ */
+
+async function refillQueue(env: Env): Promise<number> {
+  const nextPageStr = await getMeta(env, 'next_page');
+  let nextPage = parseInt(nextPageStr ?? '1', 10);
+
+  const sortKey = env.ANILIST_SORT || 'popular';
+
+  console.log(`[Refill] fetch page ${nextPage}, sort=${sortKey}`);
+
+  const items = await fetchAniListTop(nextPage, sortKey);
+
+  if (items.length === 0) {
+    console.log('[Refill] no more items from AniList');
+    return 0;
+  }
+
+  const insertItems = items.map((item) => {
+    const title =
+      item.title.romaji || item.title.english || item.title.native || 'Unknown';
+    const slug = slugify(title) || `anilist-${item.id}`;
+    return {
+      anilistId: item.id,
+      slug,
+      title,
+    };
+  });
+
+  const inserted = await insertQueue(env, insertItems);
+
+  nextPage++;
+
+  await Promise.all([
+    setMeta(env, 'next_page', String(nextPage)),
+    setMeta(
+      env,
+      'total_fetched',
+      String((await getMetaTotal(env)) + items.length)
+    ),
+  ]);
+
+  console.log(`[Refill] inserted ${inserted} (page ${nextPage - 1})`);
+  return inserted;
+}
+
+async function getMetaTotal(env: Env): Promise<number> {
+  const v = await getMeta(env, 'total_fetched');
+  return parseInt(v ?? '0', 10);
+}
+
+/* ============================================================
+   SCRAPE ONE — fetch detail, build, push
+   ============================================================ */
+
+interface ScrapeResult {
   ok: boolean;
   fileCount: number;
-  files: string[];
   sourceUsed: string;
   error?: string;
   voiceActors: UnifiedVoiceActor[];
@@ -40,28 +97,52 @@ interface ScrapeOneResult {
 
 async function scrapeOne(
   env: Env,
-  slug: string
-): Promise<ScrapeOneResult> {
+  slug: string,
+  anilistId: number,
+  title: string
+): Promise<ScrapeResult> {
   const t0 = Date.now();
   const log = (msg: string) =>
     console.log(`[Scrape:${slug}] ${msg} (+${Date.now() - t0}ms)`);
 
   log('start');
 
-  const chain = await chainSearch(slug);
-  log(`chain search: ${chain.source}`);
+  const media = await fetchAniListById(anilistId);
+  if (!media) {
+    return {
+      ok: false,
+      fileCount: 0,
+      sourceUsed: 'anilist',
+      error: 'AniList metadata not found',
+      voiceActors: [],
+    };
+  }
 
-  const { media, malId, kitsuId } = chain;
+  log('metadata ok');
+
+  const malId = media.myanimelistId ?? null;
+
+  const kitsuId = await searchKitsuId(title).catch(() => null);
+  log(`kitsu: ${kitsuId ?? 'none'}`);
+
+  const maxChars = parseInt(
+    env.MAX_CHARACTERS ?? String(DEFAULT_MAX_CHARACTERS),
+    10
+  );
+  const maxEps = parseInt(
+    env.MAX_EPISODES ?? String(DEFAULT_MAX_EPISODES),
+    10
+  );
 
   const [charsResult, relationsResult, episodesResult] = await Promise.all([
     malId
-      ? fetchCharactersFromAniList(malId).catch(() => null)
+      ? fetchCharactersFromAniList(malId, maxChars).catch(() => null)
       : Promise.resolve(null),
     malId
       ? fetchRelationsFromShikimori(malId).catch(() => null)
       : Promise.resolve(null),
     kitsuId
-      ? fetchEpisodesFromKitsu(kitsuId).catch(() => null)
+      ? fetchEpisodesFromKitsu(kitsuId, maxEps).catch(() => null)
       : Promise.resolve(null),
   ]);
 
@@ -74,19 +155,8 @@ async function scrapeOne(
     `fetched: chars=${characters.length}, VA=${voiceActors.length}, rel=${relations.length}, eps=${episodes.length}`
   );
 
-  const studio = media.studios?.nodes?.[0]?.name ?? null;
-
-  const synopsis =
-    (await generateSynopsis(env, {
-      title: media.title.romaji || slug,
-      titleEnglish: media.title.english,
-      originalSynopsis: media.description,
-      year: media.seasonYear,
-      genres: media.genres,
-      studio,
-    })) ?? '';
-
-  log(`synopsis: ${synopsis.length} chars`);
+  const rawSynopsis = media.description ?? '';
+  const synopsis = stripHtml(rawSynopsis) || '> ⚠️ Sinopsis belum tersedia.';
 
   const built = buildAll({
     slug,
@@ -101,17 +171,18 @@ async function scrapeOne(
   });
 
   const markdownPath = `src/content/anime/${slug}.md`;
-
-  const allAnimeFiles: FileToCommit[] = [
+  const animeFiles: FileToCommit[] = [
     { path: markdownPath, content: built.markdown },
     ...built.animeFiles,
   ];
 
-  const commitMsg = `feat(${slug}): scrape data from ${chain.source}`;
+  log(`built: ${animeFiles.length} files`);
+
+  const commitMsg = `feat(${slug}): scrape from AniList`;
 
   const commitResult = await githubCommitMultipleFiles(
     env,
-    allAnimeFiles,
+    animeFiles,
     commitMsg
   );
 
@@ -120,39 +191,49 @@ async function scrapeOne(
     return {
       ok: false,
       fileCount: 0,
-      files: [],
-      sourceUsed: chain.source,
+      sourceUsed: 'anilist',
       error: commitResult.error ?? 'commit failed',
       voiceActors,
     };
   }
 
-  log(`commit OK: ${commitResult.sha?.slice(0, 7)} (${allAnimeFiles.length} files)`);
+  log(`commit OK: ${commitResult.sha?.slice(0, 7)}`);
 
   return {
     ok: true,
-    fileCount: allAnimeFiles.length,
-    files: allAnimeFiles.map((f) => f.path),
-    sourceUsed: chain.source,
+    fileCount: animeFiles.length,
+    sourceUsed: 'anilist',
     voiceActors,
   };
 }
 
+function stripHtml(s: string): string {
+  return s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /* ============================================================
-   ACTOR FILES — merge global actor list
+   MERGE ACTOR FILES
    ============================================================ */
 
 async function mergeActorFiles(
   env: Env,
-  incomingVoiceActors: UnifiedVoiceActor[]
+  incoming: UnifiedVoiceActor[]
 ): Promise<{ ok: boolean; files: number; error?: string }> {
-  if (incomingVoiceActors.length === 0) {
-    return { ok: true, files: 0 };
-  }
+  if (incoming.length === 0) return { ok: true, files: 0 };
 
   const grouped = new Map<string, UnifiedVoiceActor[]>();
-
-  for (const va of incomingVoiceActors) {
+  for (const va of incoming) {
     const first = (va.id.charAt(0) || '').toLowerCase();
     const letter = /^[a-z]$/.test(first) ? first : '_';
     if (!grouped.has(letter)) grouped.set(letter, []);
@@ -161,28 +242,22 @@ async function mergeActorFiles(
 
   const filesToCommit: FileToCommit[] = [];
 
-  for (const [letter, incoming] of grouped) {
+  for (const [letter, list] of grouped) {
     const path = `data/actors/${letter}.json`;
-
     const existing = await githubGetFile(env, path);
 
     const map = new Map<string, UnifiedVoiceActor>();
-
     if (existing) {
       try {
         const parsed = JSON.parse(existing.content) as UnifiedVoiceActor[];
         if (Array.isArray(parsed)) {
-          for (const va of parsed) {
-            if (va?.id) map.set(va.id, va);
-          }
+          for (const va of parsed) if (va?.id) map.set(va.id, va);
         }
-      } catch {
-        // Corrupt existing — overwrite saja
-      }
+      } catch {}
     }
 
     let newCount = 0;
-    for (const va of incoming) {
+    for (const va of list) {
       if (map.has(va.id)) {
         const old = map.get(va.id)!;
         const merged: UnifiedVoiceActor = {
@@ -198,23 +273,16 @@ async function mergeActorFiles(
       }
     }
 
-    if (newCount === 0 && existing) {
-      continue;
-    }
+    if (newCount === 0 && existing) continue;
 
-    const sorted = [...map.values()].sort((a, b) =>
-      a.id.localeCompare(b.id)
-    );
-
+    const sorted = [...map.values()].sort((a, b) => a.id.localeCompare(b.id));
     filesToCommit.push({
       path,
       content: JSON.stringify(sorted, null, 2) + '\n',
     });
   }
 
-  if (filesToCommit.length === 0) {
-    return { ok: true, files: 0 };
-  }
+  if (filesToCommit.length === 0) return { ok: true, files: 0 };
 
   const result = await githubCommitMultipleFiles(
     env,
@@ -222,24 +290,23 @@ async function mergeActorFiles(
     `chore(actors): update ${filesToCommit.length} file(s)`
   );
 
-  if (!result.ok) {
-    return { ok: false, files: 0, error: result.error };
-  }
-
+  if (!result.ok) return { ok: false, files: 0, error: result.error };
   return { ok: true, files: filesToCommit.length };
 }
 
 /* ============================================================
-   MAIN RUNNER
+   MAIN RUN
    ============================================================ */
 
 export interface CronRunResult {
-  totalAvailable: number;
-  batchProcessed: number;
+  refilled: number;
+  processed: number;
   succeeded: number;
   failed: number;
-  skipped: number;
   actorFilesUpdated: number;
+  queuePending: number;
+  queueTotal: number;
+  nextPage: number;
   errors: string[];
 }
 
@@ -248,167 +315,105 @@ export async function runScrapeCron(env: Env): Promise<CronRunResult> {
   const log = (msg: string) =>
     console.log(`[Cron] ${msg} (+${Date.now() - t0}ms)`);
 
-  const batchSize = parseInt(env.BATCH_SIZE ?? String(DEFAULT_BATCH), 10);
-  const incremental = env.INCREMENTAL === 'true';
-  const ttlDays = parseInt(env.SCRAPE_TTL_DAYS ?? '30', 10);
+  log('start');
 
-  log(`start — batch=${batchSize}, incremental=${incremental}, ttl=${ttlDays}d`);
+  const result: CronRunResult = {
+    refilled: 0,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    actorFilesUpdated: 0,
+    queuePending: 0,
+    queueTotal: 0,
+    nextPage: 1,
+    errors: [],
+  };
 
-  /* ── 1. Seed dari yukionime ─────────────────────── */
-  let items: Awaited<ReturnType<typeof fetchYukionimeList>> = [];
+  /* ── 1. Refill kalau queue < threshold ────────── */
   try {
-    items = await fetchYukionimeList(env);
-    log(`yukionime list: ${items.length} anime`);
+    const pending = await getQueuePendingCount(env);
+    if (pending < REFILL_THRESHOLD) {
+      const inserted = await refillQueue(env);
+      result.refilled = inserted;
+    }
   } catch (err) {
-    log(`fetch yukionime FAILED: ${err}`);
-    return {
-      totalAvailable: 0,
-      batchProcessed: 0,
-      succeeded: 0,
-      failed: 0,
-      skipped: 0,
-      actorFilesUpdated: 0,
-      errors: [`yukionime fetch: ${(err as Error).message}`],
+    const msg = (err as Error).message ?? 'refill failed';
+    log(`refill error: ${msg}`);
+    result.errors.push(`refill: ${msg}`);
+  }
+
+  /* ── 2. Ambil 1 item ──────────────────────────── */
+  const item = await nextQueueItem(env);
+
+  if (!item) {
+    log('queue empty, exit');
+    const stats = await getQueueStats(env);
+    result.queuePending = stats.pending;
+    result.queueTotal = stats.total;
+    result.nextPage = stats.next_page;
+    return result;
+  }
+
+  const locked = await markQueueInProgress(env, item.id);
+  if (!locked) {
+    log(`item ${item.id} already locked, exit`);
+    return result;
+  }
+
+  log(`processing [${item.id}] ${item.slug}`);
+
+  /* ── 3. Scrape ────────────────────────────────── */
+  let scrapeResult: ScrapeResult;
+
+  try {
+    scrapeResult = await scrapeOne(
+      env,
+      item.slug,
+      item.anilist_id,
+      item.title
+    );
+  } catch (err) {
+    scrapeResult = {
+      ok: false,
+      fileCount: 0,
+      sourceUsed: 'unknown',
+      error: (err as Error).message ?? 'unknown',
+      voiceActors: [],
     };
   }
 
-  const inserted = await seedAnimeList(env, items);
-  if (inserted > 0) log(`seeded ${inserted} new anime to scrape_state`);
+  result.processed = 1;
 
-  /* ── 2. Ambil batch ─────────────────────────────── */
-  const slugs = await getNextBatch(env, batchSize, incremental, ttlDays);
-  const stats = await getStats(env);
+  /* ── 4. Sukses → DELETE dari queue ────────────── */
+  if (scrapeResult.ok) {
+    await deleteQueueItem(env, item.id);
+    result.succeeded = 1;
+    log(`✓ ${item.slug} deleted from queue`);
 
-  log(`batch: ${slugs.length} slugs — total pending ${stats.pending}, failed ${stats.failed}, success ${stats.success}`);
-
-  if (slugs.length === 0) {
-    log('nothing to scrape, exit');
-
-    await writeLog(env, {
-      durationMs: Date.now() - t0,
-      totalAvailable: stats.total,
-      batchSize: 0,
-      succeeded: 0,
-      failed: 0,
-      skipped: 0,
-      errors: [],
-    });
-
-    return {
-      totalAvailable: stats.total,
-      batchProcessed: 0,
-      succeeded: 0,
-      failed: 0,
-      skipped: 0,
-      actorFilesUpdated: 0,
-      errors: [],
-    };
-  }
-
-  /* ── 3. Proses tiap anime ───────────────────────── */
-  let succeeded = 0;
-  let failed = 0;
-  let skipped = 0;
-  const errors: string[] = [];
-  const allVoiceActors: UnifiedVoiceActor[] = [];
-
-  for (const slug of slugs) {
-    const locked = await markInProgress(env, slug);
-    if (!locked) {
-      log(`skip ${slug} — already in progress`);
-      skipped++;
-      continue;
-    }
-
-    try {
-      const result = await Promise.race([
-        scrapeOne(env, slug),
-        new Promise<ScrapeOneResult>((resolve) =>
-          setTimeout(
-            () =>
-              resolve({
-                ok: false,
-                fileCount: 0,
-                files: [],
-                sourceUsed: 'timeout',
-                error: `timeout after ${DEFAULT_TIMEOUT_MS}ms`,
-                voiceActors: [],
-              }),
-            DEFAULT_TIMEOUT_MS * 4
-          )
-        ),
-      ]);
-
-      if (result.ok) {
-        await markSuccess(env, {
-          slug,
-          sourceUsed: result.sourceUsed,
-          files: result.files,
-        });
-        allVoiceActors.push(...result.voiceActors);
-        succeeded++;
-        log(`✓ ${slug} (${result.fileCount} files)`);
+    if (scrapeResult.voiceActors.length > 0) {
+      const actorResult = await mergeActorFiles(env, scrapeResult.voiceActors);
+      if (actorResult.ok) {
+        result.actorFilesUpdated = actorResult.files;
       } else {
-        await markFailed(env, slug, result.error ?? 'unknown');
-        errors.push(`${slug}: ${result.error ?? 'unknown'}`);
-        failed++;
-        log(`✗ ${slug} — ${result.error}`);
+        result.errors.push(`actors: ${actorResult.error}`);
       }
-    } catch (err) {
-      const msg = (err as Error).message ?? 'unknown';
-      await markFailed(env, slug, msg);
-      errors.push(`${slug}: ${msg}`);
-      failed++;
-      log(`✗ ${slug} — ${msg}`);
     }
+  } else {
+    await markQueueFailed(env, item.id, scrapeResult.error ?? 'unknown');
+    result.failed = 1;
+    result.errors.push(`${item.slug}: ${scrapeResult.error}`);
+    log(`✗ ${item.slug} — ${scrapeResult.error}`);
   }
 
-  /* ── 4. Merge actor files ───────────────────────── */
-  let actorFilesUpdated = 0;
-
-  if (allVoiceActors.length > 0) {
-    log(`merging ${allVoiceActors.length} voice actors`);
-    const actorResult = await mergeActorFiles(env, allVoiceActors);
-
-    if (actorResult.ok) {
-      actorFilesUpdated = actorResult.files;
-      log(`actor files updated: ${actorFilesUpdated}`);
-    } else {
-      errors.push(`actors merge: ${actorResult.error}`);
-      log(`actor merge FAILED: ${actorResult.error}`);
-    }
-  }
-
-  /* ── 5. Log ─────────────────────────────────────── */
-  const durationMs = Date.now() - t0;
-
-  await writeLog(env, {
-    durationMs,
-    totalAvailable: stats.total,
-    batchSize: slugs.length,
-    succeeded,
-    failed,
-    skipped,
-    errors,
-  });
+  /* ── 5. Stats akhir ───────────────────────────── */
+  const stats = await getQueueStats(env);
+  result.queuePending = stats.pending;
+  result.queueTotal = stats.total;
+  result.nextPage = stats.next_page;
 
   log(
-    `done — ${succeeded} success, ${failed} failed, ${skipped} skipped, ${actorFilesUpdated} actor files (${durationMs}ms)`
+    `done - refilled=${result.refilled}, ok=${result.succeeded}, fail=${result.failed}, pending=${stats.pending}, page=${stats.next_page} (${Date.now() - t0}ms)`
   );
 
-  return {
-    totalAvailable: stats.total,
-    batchProcessed: slugs.length,
-    succeeded,
-    failed,
-    skipped,
-    actorFilesUpdated,
-    errors,
-  };
+  return result;
 }
-
-/* ============================================================
-   MANUAL RUN — untuk endpoint /admin/scrape
-   ============================================================ */
-
-
