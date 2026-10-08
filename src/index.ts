@@ -1,6 +1,6 @@
 import type { Env } from './types';
 import { runScrapeCron } from './handlers/cron';
-import { getStats } from './lib/state';
+import { getQueueStats, resetPermanentFailed } from './lib/state';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -16,7 +16,7 @@ export default {
     }
 
     if (url.pathname === '/stats') {
-      const stats = await getStats(env);
+      const stats = await getQueueStats(env);
       return Response.json(stats);
     }
 
@@ -30,6 +30,11 @@ export default {
           { status: 500 }
         );
       }
+    }
+
+    if (url.pathname === '/reset-failed') {
+      const reset = await resetPermanentFailed(env);
+      return Response.json({ ok: true, reset });
     }
 
     return new Response('Not Found', { status: 404 });
