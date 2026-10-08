@@ -17,12 +17,13 @@ binding = "AI"
 enabled = true
 
 [vars]
-YUKIONIME_API = "https://yukionime.pages.dev/api/v1/anime.json"
 YUKIO_DATA_REPO = "bimaakbar-dev/yukio-data"
 YUKIO_DATA_BRANCH = "main"
-BATCH_SIZE = "1"
-INCREMENTAL = "true"
-SCRAPE_TTL_DAYS = "30"
+ANILIST_SORT = "popular"
+MAX_EPISODES = "100"
+MAX_CHARACTERS = "100"
+START_PAGE = "1"
+PAGE_STEP = "2"
 
 [dev]
 port = 8787
