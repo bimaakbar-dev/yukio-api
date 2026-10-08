@@ -9,7 +9,6 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "yukio-ratings-db"
 database_id = "84b22e1e-29ae-437c-b7ec-63337c7387d1"
-migrations_dir = "migrations"
 
 [ai]
 binding = "AI"
@@ -21,10 +20,7 @@ enabled = true
 YUKIONIME_API = "https://yukionime.pages.dev/api/v1/anime.json"
 YUKIO_DATA_REPO = "bimaakbar-dev/yukio-data"
 YUKIO_DATA_BRANCH = "main"
-
-BATCH_SIZE = "8"
-
-
+BATCH_SIZE = "1"
 INCREMENTAL = "true"
 SCRAPE_TTL_DAYS = "30"
 
