@@ -25,6 +25,7 @@ import {
 const REFILL_THRESHOLD = 100;
 const DEFAULT_MAX_EPISODES = 100;
 const DEFAULT_MAX_CHARACTERS = 100;
+const RACE_RETRY_DELAY_MS = 2000;
 
 function stripHtml(s: string): string {
   return s
@@ -39,6 +40,10 @@ function stripHtml(s: string): string {
     .replace(/&#0?39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function refillQueue(env: Env): Promise<number> {
@@ -121,11 +126,14 @@ async function scrapeOne(
     ...built.animeFiles,
   ];
 
-  const result = await githubCommitMultipleFiles(
-    env,
-    files,
-    `feat(${slug}): scrape from AniList`
-  );
+  const commitMsg = `feat(${slug}): scrape from AniList`;
+
+  let result = await githubCommitMultipleFiles(env, files, commitMsg);
+
+  if (!result.ok && result.error?.includes('RACE_CONDITION')) {
+    await sleep(RACE_RETRY_DELAY_MS);
+    result = await githubCommitMultipleFiles(env, files, `${commitMsg} (retry)`);
+  }
 
   if (!result.ok) {
     return {
@@ -203,11 +211,13 @@ async function mergeActorFiles(
 
   if (files.length === 0) return { ok: true, files: 0 };
 
-  const r = await githubCommitMultipleFiles(
-    env,
-    files,
-    `chore(actors): update ${files.length} file(s)`
-  );
+  const commitMsg = `chore(actors): update ${files.length} file(s)`;
+  let r = await githubCommitMultipleFiles(env, files, commitMsg);
+
+  if (!r.ok && r.error?.includes('RACE_CONDITION')) {
+    await sleep(RACE_RETRY_DELAY_MS);
+    r = await githubCommitMultipleFiles(env, files, `${commitMsg} (retry)`);
+  }
 
   return r.ok ? { ok: true, files: files.length } : { ok: false, files: 0, error: r.error };
 }
