@@ -27,7 +27,6 @@ import {
 } from '../lib/state';
 
 const REFILL_THRESHOLD = 100;
-const PAGE_SIZE = 50;
 const DEFAULT_MAX_EPISODES = 100;
 const DEFAULT_MAX_CHARACTERS = 100;
 
