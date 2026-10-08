@@ -5,46 +5,18 @@ main = "src/index.ts"
 compatibility_date = "2026-10-08"
 compatibility_flags = ["nodejs_compat"]
 
-# ────────────────────────────────────────────────────────
-# D1 Database Binding
-# ────────────────────────────────────────────────────────
-# Setelah `wrangler d1 create yukio-ratings-db`, isi database_id
-# dengan UUID yang dikembalikan. Kalau pakai auto-provisioning
-# (wrangler 4.45.0+), biarkan database_id kosong — wrangler akan
-# create otomatis saat deploy pertama.
-#
-# Binding name "DB" dipakai di kode sebagai `env.DB`.
-# ────────────────────────────────────────────────────────
-
 [[d1_databases]]
 binding = "DB"
 database_name = "yukio-ratings-db"
-database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+database_id = "84b22e1e-29ae-437c-b7ec-63337c7387d1"
 # preview_database_id = "REPLACE_WITH_YOUR_PREVIEW_DATABASE_ID"
 migrations_dir = "migrations"
-
-# ────────────────────────────────────────────────────────
-# Observability
-# ────────────────────────────────────────────────────────
-# Log ke Cloudflare dashboard — berguna untuk debug rating error.
 
 [observability]
 enabled = true
 
-# ────────────────────────────────────────────────────────
-# Environment Variables (non-secret)
-# ────────────────────────────────────────────────────────
-# Origin yang diizinkan untuk CORS. Pisahkan dengan koma.
-# Nanti kalau punya domain, tambahkan di sini.
-
 [vars]
 ALLOWED_ORIGINS = "https://yukionime.pages.dev,http://localhost:4321"
-
-# ────────────────────────────────────────────────────────
-# Local Dev
-# ────────────────────────────────────────────────────────
-# `wrangler dev` akan pakai D1 lokal (SQLite simulation).
-# Jalankan `npm run db:init:local` sebelum dev pertama kali.
 
 [dev]
 port = 8787
