@@ -1,5 +1,6 @@
 import type { Env, RequestContext } from './types.js';
 import {
+  getRatingAggregate,
   getRatingData,
   getAllRatings,
   upsertRating,
@@ -11,6 +12,9 @@ const SCORE_MIN = 1;
 const SCORE_MAX = 5;
 const USER_ID_HEADER = 'X-User-Id';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const CACHE_AGGREGATE = 'public, max-age=60, s-maxage=300, stale-while-revalidate=3600';
+const CACHE_NO_STORE = 'no-store';
 
 function jsonResponse(data: unknown, init: ResponseInit = {}): Response {
   const body = {
@@ -99,18 +103,36 @@ function isValidScore(score: unknown): score is number {
   );
 }
 
+function aggregateToSummary(
+  agg: { avg_score: number | null; vote_count: number } | null
+): { average: number; votes: number } {
+  const votes = agg?.vote_count ?? 0;
+  const avg = agg?.avg_score ?? 0;
+  const average = votes > 0 ? Math.round(avg * 2 * 10) / 10 : 0;
+  return { average, votes };
+}
+
 async function handleGetOne(
   animeId: string,
   env: Env,
-  ctx: RequestContext,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
   if (!isValidAnimeId(animeId)) {
     return errorResponse('INVALID_ID', 'Format anime id tidak valid', 400, corsHeaders);
   }
 
-  const data = await getRatingData(env.DB, animeId, ctx.userId);
-  return jsonResponse(data, { headers: corsHeaders });
+  const agg = await getRatingAggregate(env.DB, animeId);
+  const { average, votes } = aggregateToSummary(agg);
+
+  return jsonResponse(
+    { animeId, average, votes },
+    {
+      headers: {
+        ...corsHeaders,
+        'Cache-Control': CACHE_AGGREGATE,
+      },
+    }
+  );
 }
 
 async function handlePost(
@@ -159,7 +181,13 @@ async function handlePost(
   }
 
   const data = await getRatingData(env.DB, animeId, ctx.userId);
-  return jsonResponse(data, { headers: corsHeaders });
+
+  return jsonResponse(data, {
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': CACHE_NO_STORE,
+    },
+  });
 }
 
 async function handleDelete(
@@ -169,7 +197,12 @@ async function handleDelete(
   corsHeaders: Record<string, string>
 ): Promise<Response> {
   if (!ctx.userId) {
-    return errorResponse('MISSING_USER_ID', `Header ${USER_ID_HEADER} wajib ada`, 400, corsHeaders);
+    return errorResponse(
+      'MISSING_USER_ID',
+      `Header ${USER_ID_HEADER} wajib ada`,
+      400,
+      corsHeaders
+    );
   }
 
   if (!isValidAnimeId(animeId)) {
@@ -184,7 +217,13 @@ async function handleDelete(
   }
 
   const data = await getRatingData(env.DB, animeId, ctx.userId);
-  return jsonResponse(data, { headers: corsHeaders });
+
+  return jsonResponse(data, {
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': CACHE_NO_STORE,
+    },
+  });
 }
 
 async function handleGetAll(
@@ -203,7 +242,12 @@ async function handleGetAll(
     ])
   );
 
-  return jsonResponse(data, { headers: corsHeaders });
+  return jsonResponse(data, {
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': CACHE_AGGREGATE,
+    },
+  });
 }
 
 const RATINGS_ONE = /^\/api\/v1\/ratings\/([^/]+)\/?$/;
@@ -230,7 +274,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (oneMatch) {
     const animeId = oneMatch[1]!;
 
-    if (method === 'GET') return handleGetOne(animeId, env, ctx, corsHeaders);
+    if (method === 'GET') return handleGetOne(animeId, env, corsHeaders);
     if (method === 'POST') return handlePost(animeId, request, env, ctx, corsHeaders);
     if (method === 'DELETE') return handleDelete(animeId, env, ctx, corsHeaders);
 
