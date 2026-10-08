@@ -1,6 +1,9 @@
 export interface Env {
   DB: D1Database;
-  GH_TOKEN: string;
+
+  GH_APP_ID: string;
+  GH_APP_INSTALLATION_ID: string;
+  GH_APP_PRIVATE_KEY: string;
 
   YUKIO_DATA_REPO: string;
   YUKIO_DATA_BRANCH: string;
@@ -9,7 +12,6 @@ export interface Env {
   ANILIST_SORT: string;
   MAX_EPISODES: string;
   MAX_CHARACTERS: string;
-
   START_PAGE: string;
   PAGE_STEP: string;
 }
