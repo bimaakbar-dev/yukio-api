@@ -1,42 +1,22 @@
-// ────────────────────────────────────────────────────────
-// D1 query helpers
-// ────────────────────────────────────────────────────────
-//
-// Semua query pakai prepared statement (.prepare().bind())
-// untuk mencegah SQL injection. Tidak ada string interpolation.
-//
-// Reference:
-//   - D1 prepared statements: https://developers.cloudflare.com/d1/worker-api/prepared-statements/
-//   - UPSERT syntax:          https://sqlite.org/lang_upsert.html
-//   - Aggregate functions:    https://developers.cloudflare.com/d1/sql-api/sql-statements/
-// ────────────────────────────────────────────────────────
-
 import type {
   RatingRow,
   RatingAggregate,
   RatingData,
 } from './types.js';
 
-// ────────────────────────────────────────────────────────
-// Read
-// ────────────────────────────────────────────────────────
+const M_THRESHOLD = 10;
+const DEFAULT_GLOBAL = 3.0;
+const GLOBAL_CACHE_TTL = 5 * 60 * 1000;
 
-/**
- * Ambil agregat rating (average + vote count) untuk 1 anime.
- * Return null kalau belum ada vote sama sekali.
- *
- * SQL: SELECT AVG(score), COUNT(*) FROM ratings WHERE anime_id = ?
- */
+let globalCache: { value: number; ts: number } | null = null;
+
 export async function getRatingAggregate(
   db: D1Database,
   animeId: string
 ): Promise<RatingAggregate | null> {
   const row = await db
     .prepare(
-      `SELECT
-         anime_id,
-         AVG(score) AS avg_score,
-         COUNT(*)   AS vote_count
+      `SELECT anime_id, AVG(score) AS avg_score, COUNT(*) AS vote_count
        FROM ratings
        WHERE anime_id = ?`
     )
@@ -46,12 +26,6 @@ export async function getRatingAggregate(
   return row ?? null;
 }
 
-/**
- * Ambil rating milik 1 user untuk 1 anime.
- * Return null kalau user belum vote anime ini.
- *
- * SQL: SELECT * FROM ratings WHERE anime_id = ? AND user_id = ?
- */
 export async function getUserRating(
   db: D1Database,
   animeId: string,
@@ -69,84 +43,100 @@ export async function getUserRating(
   return row ?? null;
 }
 
-/**
- * Ambil data rating lengkap untuk 1 anime dalam 1 round-trip:
- * agregat + rating user (kalau ada).
- *
- * Return RatingData yang siap dipakai sebagai response API.
- *
- * Catatan: query dijalankan berurutan (bukan paralel) karena
- * D1 batch() tidak support campuran SELECT + parameter bind
- * yang berbeda. Untuk 2 query kecil ini, serial OK.
- */
+export async function getGlobalAverage(db: D1Database): Promise<number> {
+  const now = Date.now();
+
+  if (globalCache && now - globalCache.ts < GLOBAL_CACHE_TTL) {
+    return globalCache.value;
+  }
+
+  const row = await db
+    .prepare(`SELECT AVG(score) AS avg_score FROM ratings`)
+    .first<{ avg_score: number | null }>();
+
+  const value =
+    row?.avg_score != null && row.avg_score > 0 ? row.avg_score : DEFAULT_GLOBAL;
+
+  globalCache = { value, ts: now };
+  return value;
+}
+
+export function computeWeighted(
+  rawAvg: number,
+  votes: number,
+  globalAvg: number,
+  m: number = M_THRESHOLD
+): number {
+  if (votes <= 0) return 0;
+  return (votes / (votes + m)) * rawAvg + (m / (votes + m)) * globalAvg;
+}
+
 export async function getRatingData(
   db: D1Database,
   animeId: string,
   userId: string
 ): Promise<RatingData> {
-  const [aggregate, userRating] = await Promise.all([
+  const [aggregate, userRating, globalAvg] = await Promise.all([
     getRatingAggregate(db, animeId),
     getUserRating(db, animeId, userId),
+    getGlobalAverage(db),
   ]);
 
   const rawAvg = aggregate?.avg_score ?? 0;
-  const votes  = aggregate?.vote_count ?? 0;
+  const votes = aggregate?.vote_count ?? 0;
 
-  // Konversi skala 1-5 → 1-10.
-  // Kalau belum ada vote, average = 0 (bukan null) agar
-  // frontend bisa handle dengan `if (average > 0)`.
-  const average = votes > 0
-    ? Math.round(rawAvg * 2 * 10) / 10
-    : 0;
+  const weighted = computeWeighted(rawAvg, votes, globalAvg);
+
+  const average = votes > 0 ? Math.round(weighted * 2 * 10) / 10 : 0;
+  const rawAverage = votes > 0 ? Math.round(rawAvg * 2 * 10) / 10 : 0;
 
   return {
     animeId,
     average,
+    rawAverage,
     votes,
     userScore: userRating?.score ?? null,
+    provisional: votes > 0 && votes < M_THRESHOLD,
   };
 }
 
-/**
- * Ambil semua rating (untuk endpoint /api/v1/ratings).
- * Berguna untuk sync / audit.
- *
- * SQL: SELECT anime_id, AVG(score), COUNT(*) FROM ratings GROUP BY anime_id
- */
 export async function getAllRatings(
   db: D1Database
-): Promise<Array<{ anime_id: string; avg_score: number; vote_count: number }>> {
-  const result = await db
-    .prepare(
-      `SELECT
-         anime_id,
-         AVG(score) AS avg_score,
-         COUNT(*)   AS vote_count
-       FROM ratings
-       GROUP BY anime_id
-       ORDER BY anime_id`
-    )
-    .all<{ anime_id: string; avg_score: number; vote_count: number }>();
+): Promise<
+  Array<{
+    anime_id: string;
+    average: number;
+    rawAverage: number;
+    votes: number;
+    provisional: boolean;
+  }>
+> {
+  const [result, globalAvg] = await Promise.all([
+    db
+      .prepare(
+        `SELECT anime_id, AVG(score) AS avg_score, COUNT(*) AS vote_count
+         FROM ratings
+         GROUP BY anime_id
+         ORDER BY anime_id`
+      )
+      .all<{ anime_id: string; avg_score: number; vote_count: number }>(),
+    getGlobalAverage(db),
+  ]);
 
-  return result.results ?? [];
+  const rows = result.results ?? [];
+
+  return rows.map((r) => {
+    const weighted = computeWeighted(r.avg_score, r.vote_count, globalAvg);
+    return {
+      anime_id: r.anime_id,
+      average: Math.round(weighted * 2 * 10) / 10,
+      rawAverage: Math.round(r.avg_score * 2 * 10) / 10,
+      votes: r.vote_count,
+      provisional: r.vote_count < M_THRESHOLD,
+    };
+  });
 }
 
-// ────────────────────────────────────────────────────────
-// Write
-// ────────────────────────────────────────────────────────
-
-/**
- * Insert atau update rating user untuk 1 anime.
- * Pakai UPSERT (INSERT ... ON CONFLICT ... DO UPDATE).
- *
- * Composite PK (anime_id, user_id) menjamin 1 vote per user per anime.
- * Kalau sudah ada, score & updated_at di-overwrite.
- *
- * Return row yang baru tersimpan (untuk verifikasi).
- *
- * Reference UPSERT SQLite:
- *   https://sqlite.org/lang_upsert.html
- */
 export async function upsertRating(
   db: D1Database,
   animeId: string,
@@ -160,8 +150,7 @@ export async function upsertRating(
       `INSERT INTO ratings (anime_id, user_id, score, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (anime_id, user_id) DO UPDATE
-         SET score      = excluded.score,
-             updated_at = excluded.updated_at`
+         SET score = excluded.score, updated_at = excluded.updated_at`
     )
     .bind(animeId, userId, score, now, now)
     .run();
@@ -178,19 +167,13 @@ export async function upsertRating(
   return saved;
 }
 
-/**
- * Hapus rating user untuk 1 anime.
- * Return true kalau ada row yang dihapus, false kalau tidak ada.
- */
 export async function deleteRating(
   db: D1Database,
   animeId: string,
   userId: string
 ): Promise<boolean> {
   const result = await db
-    .prepare(
-      `DELETE FROM ratings WHERE anime_id = ? AND user_id = ?`
-    )
+    .prepare(`DELETE FROM ratings WHERE anime_id = ? AND user_id = ?`)
     .bind(animeId, userId)
     .run();
 
