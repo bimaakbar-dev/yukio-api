@@ -31,7 +31,7 @@ async function fetchTimeout(
 }
 
 function slugify(s: string): string {
-  return s
+  return String(s ?? '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -43,11 +43,10 @@ function slugify(s: string): string {
 
 export { slugify };
 
-/* ============================================================
-   ANILIST GRAPHQL - via proxy Val Town
-   ============================================================ */
-
-async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
+async function gql<T>(
+  query: string,
+  variables: Record<string, unknown>
+): Promise<T | null> {
   try {
     const res = await fetchTimeout(ANILIST_PROXY, {
       method: 'POST',
@@ -72,10 +71,6 @@ async function gql<T>(query: string, variables: Record<string, unknown>): Promis
     return null;
   }
 }
-
-/* ============================================================
-   ANILIST - TOP LIST (untuk queue)
-   ============================================================ */
 
 const SORT_MAP: Record<string, string> = {
   popular: 'POPULARITY_DESC',
@@ -109,10 +104,6 @@ export async function fetchAniListTop(
 
   return data?.Page?.media ?? [];
 }
-
-/* ============================================================
-   ANILIST - METADATA (by ID)
-   ============================================================ */
 
 interface AniListMediaRaw {
   id: number;
@@ -192,7 +183,9 @@ function mapAniListSource(raw: string | null | undefined): string | null {
   return map[lower] ?? null;
 }
 
-export async function fetchAniListById(id: number): Promise<AniListMedia | null> {
+export async function fetchAniListById(
+  id: number
+): Promise<AniListMedia | null> {
   const query = `
     query ($id: Int) {
       Media(id: $id, type: ANIME) {
@@ -271,10 +264,6 @@ export async function fetchAniListById(id: number): Promise<AniListMedia | null>
     source: mapAniListSource(m.source),
   };
 }
-
-/* ============================================================
-   ANILIST - CHARACTERS
-   ============================================================ */
 
 interface AniListCharEdge {
   role: string;
@@ -422,10 +411,6 @@ export async function fetchCharactersFromAniList(
   return { characters, voiceActors };
 }
 
-/* ============================================================
-   SHIKIMORI - RELATIONS
-   ============================================================ */
-
 interface ShikimoriRelated {
   relation?: string;
   anime?: { id: number; name: string } | null;
@@ -489,10 +474,6 @@ export async function fetchRelationsFromShikimori(
     return null;
   }
 }
-
-/* ============================================================
-   KITSU - EPISODES
-   ============================================================ */
 
 interface KitsuAnimeRaw {
   id: string;
