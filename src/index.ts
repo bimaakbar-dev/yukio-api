@@ -2,6 +2,8 @@ import type { Env, RequestContext } from './types.js';
 import {
   getRatingAggregate,
   getRatingData,
+  getGlobalAverage,
+  computeWeighted,
   getAllRatings,
   upsertRating,
   deleteRating,
@@ -10,6 +12,7 @@ import {
 const API_VERSION = 'v1';
 const SCORE_MIN = 1;
 const SCORE_MAX = 5;
+const M_THRESHOLD = 10;
 const USER_ID_HEADER = 'X-User-Id';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,15 +106,6 @@ function isValidScore(score: unknown): score is number {
   );
 }
 
-function aggregateToSummary(
-  agg: { avg_score: number | null; vote_count: number } | null
-): { average: number; votes: number } {
-  const votes = agg?.vote_count ?? 0;
-  const avg = agg?.avg_score ?? 0;
-  const average = votes > 0 ? Math.round(avg * 2 * 10) / 10 : 0;
-  return { average, votes };
-}
-
 async function handleGetOne(
   animeId: string,
   env: Env,
@@ -121,11 +115,26 @@ async function handleGetOne(
     return errorResponse('INVALID_ID', 'Format anime id tidak valid', 400, corsHeaders);
   }
 
-  const agg = await getRatingAggregate(env.DB, animeId);
-  const { average, votes } = aggregateToSummary(agg);
+  const [agg, globalAvg] = await Promise.all([
+    getRatingAggregate(env.DB, animeId),
+    getGlobalAverage(env.DB),
+  ]);
+
+  const rawAvg = agg?.avg_score ?? 0;
+  const votes = agg?.vote_count ?? 0;
+  const weighted = computeWeighted(rawAvg, votes, globalAvg);
+
+  const average = votes > 0 ? Math.round(weighted * 2 * 10) / 10 : 0;
+  const rawAverage = votes > 0 ? Math.round(rawAvg * 2 * 10) / 10 : 0;
 
   return jsonResponse(
-    { animeId, average, votes },
+    {
+      animeId,
+      average,
+      rawAverage,
+      votes,
+      provisional: votes > 0 && votes < M_THRESHOLD,
+    },
     {
       headers: {
         ...corsHeaders,
@@ -236,8 +245,10 @@ async function handleGetAll(
     rows.map((r) => [
       r.anime_id,
       {
-        average: Math.round(r.avg_score * 2 * 10) / 10,
-        votes: r.vote_count,
+        average: r.average,
+        rawAverage: r.rawAverage,
+        votes: r.votes,
+        provisional: r.provisional,
       },
     ])
   );
