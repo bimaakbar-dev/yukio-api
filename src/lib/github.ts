@@ -145,7 +145,14 @@ export async function githubCommitMultipleFiles(
       headers: { ...h, 'Content-Type': 'application/json' },
       body: JSON.stringify({ sha: newCommitData.sha, force: false }),
     });
-    if (!updateRes.ok) return { ok: false, error: `Update ref failed: HTTP ${updateRes.status}` };
+
+    if (updateRes.status === 422) {
+      return { ok: false, error: 'RACE_CONDITION: head moved, retry' };
+    }
+
+    if (!updateRes.ok) {
+      return { ok: false, error: `Update ref failed: HTTP ${updateRes.status}` };
+    }
 
     return {
       ok: true,
