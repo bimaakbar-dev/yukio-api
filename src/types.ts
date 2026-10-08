@@ -1,56 +1,32 @@
 export interface Env {
   DB: D1Database;
-  AI: Ai;
-
   GH_TOKEN: string;
 
-  YUKIONIME_API: string;
   YUKIO_DATA_REPO: string;
   YUKIO_DATA_BRANCH: string;
 
-  BATCH_SIZE: string;
   INCREMENTAL: string;
-  SCRAPE_TTL_DAYS: string;
+  ANILIST_SORT: string;
+  MAX_EPISODES: string;
+  MAX_CHARACTERS: string;
 }
 
-export type ScrapeStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'success'
-  | 'failed'
-  | 'skipped';
-
-export interface ScrapeStateRow {
+export interface ScrapeQueueRow {
+  id: number;
+  anilist_id: number;
   slug: string;
-  status: ScrapeStatus;
-  source_used: string | null;
-  file_count: number;
-  files_json: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'failed';
   attempt_count: number;
   last_error: string | null;
-  first_scraped_at: number | null;
-  last_scraped_at: number | null;
-  last_success_at: number | null;
   created_at: number;
   updated_at: number;
 }
 
-export interface YukionimeListItem {
-  id: string;
-  title: string;
-  titleEnglish?: string | null;
-  titleNative?: string | null;
-  image?: string | null;
-  type: string;
-  status: string;
-  season?: string | null;
-  year?: number | null;
-  episodes?: number | null;
-  duration?: number | null;
-  rating?: string | null;
-  genres?: string[];
-  studios?: string[];
-  stats?: { score?: number; scoredBy?: number } | null;
+export interface ScrapeMetaRow {
+  key: string;
+  value: string;
+  updated_at: number;
 }
 
 export interface AniListTitle {
@@ -98,6 +74,13 @@ export interface AniListMedia {
   source?: string | null;
 }
 
+export interface AniListTopItem {
+  id: number;
+  idMal: number | null;
+  title: AniListTitle;
+  format: string;
+}
+
 export interface UnifiedVoiceActor {
   id: string;
   name: string;
@@ -124,12 +107,6 @@ export interface UnifiedEpisode {
 export interface UnifiedRelation {
   relation: string;
   slug: string;
-  title: string;
-}
-
-export interface ChainContext {
-  malId: number | null;
-  kitsuId: string | null;
   title: string;
 }
 
