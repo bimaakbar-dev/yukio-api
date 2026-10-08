@@ -20,27 +20,18 @@ export default {
       return Response.json(stats);
     }
 
-    return new Response('Not Found', { status: 404 });
-  },
+    if (url.pathname === '/run') {
+      try {
+        const result = await runScrapeCron(env);
+        return Response.json({ ok: true, result });
+      } catch (err) {
+        return Response.json(
+          { ok: false, error: (err as Error).message },
+          { status: 500 }
+        );
+      }
+    }
 
-  async scheduled(
-    _controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<void> {
-    ctx.waitUntil(
-      (async () => {
-        try {
-          const result = await runScrapeCron(env);
-          console.log(
-            '[Cron] done - success=' + result.succeeded +
-            ', failed=' + result.failed +
-            ', skipped=' + result.skipped
-          );
-        } catch (err) {
-          console.error('[Cron] failed:', err);
-        }
-      })()
-    );
+    return new Response('Not Found', { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

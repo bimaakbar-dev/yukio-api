@@ -17,9 +17,6 @@ binding = "AI"
 [observability]
 enabled = true
 
-[triggers]
-crons = ["*/10 * * * *"]
-
 [vars]
 YUKIONIME_API = "https://yukionime.pages.dev/api/v1/anime.json"
 YUKIO_DATA_REPO = "bimaakbar-dev/yukio-data"
