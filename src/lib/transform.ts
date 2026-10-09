@@ -1,5 +1,4 @@
 import type {
-  AniListMedia,
   UnifiedCharacter,
   UnifiedEpisode,
   UnifiedRelation,
@@ -72,7 +71,7 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 export interface MarkdownInput {
-  media: AniListMedia;
+  media: import('../types').AniListMedia;
   malId: number | null;
   kitsuId: string | null;
   synopsis: string;
@@ -95,13 +94,9 @@ export function buildMarkdown(input: MarkdownInput): string {
   const effectiveMalId = malId ?? media.myanimelistId ?? null;
   if (effectiveMalId) {
     lines.push(`malId: ${effectiveMalId}`);
-  } else {
-    lines.push('# malId: # edit manual');
   }
   if (kitsuId) {
     lines.push(`kitsuId: ${yamlString(kitsuId)}`);
-  } else {
-    lines.push('# kitsuId: # edit manual');
   }
   lines.push('');
 
@@ -110,8 +105,6 @@ export function buildMarkdown(input: MarkdownInput): string {
 
   if (media.source) {
     lines.push(`source: ${media.source}`);
-  } else {
-    lines.push('# source: # edit manual');
   }
   lines.push('');
 
@@ -122,14 +115,10 @@ export function buildMarkdown(input: MarkdownInput): string {
 
   if (media.duration && media.duration > 0) {
     lines.push(`duration: ${media.duration}`);
-  } else {
-    lines.push('# duration: # edit manual');
   }
 
   if (media.rating) {
     lines.push(`rating: ${media.rating}`);
-  } else {
-    lines.push('# rating: # edit manual');
   }
   lines.push('');
 
@@ -144,27 +133,22 @@ export function buildMarkdown(input: MarkdownInput): string {
     media.endDate?.day ?? null
   );
 
-  lines.push('aired:');
-  if (airedFrom) {
-    lines.push(`  from: "${airedFrom}"`);
-  } else {
-    lines.push('  # from: # edit manual');
+  if (airedFrom || airedTo) {
+    lines.push('aired:');
+    if (airedFrom) {
+      lines.push(`  from: "${airedFrom}"`);
+    }
+    if (airedTo) {
+      lines.push(`  to: "${airedTo}"`);
+    }
+    lines.push('');
   }
-  if (airedTo) {
-    lines.push(`  to: "${airedTo}"`);
-  } else {
-    lines.push('  # to: # edit manual');
-  }
-  lines.push('');
 
-  lines.push('stats:');
   if (media.averageScore && media.averageScore > 0) {
+    lines.push('stats:');
     lines.push(`  score: ${(media.averageScore / 10).toFixed(1)}`);
-  } else {
-    lines.push('  # score: # edit manual');
+    lines.push('');
   }
-  lines.push('  # scoredBy: # edit manual');
-  lines.push('');
 
   const genres = (media.genres ?? []).map(slugify).filter(Boolean);
   if (genres.length > 0) {
@@ -188,20 +172,14 @@ export function buildMarkdown(input: MarkdownInput): string {
 
   if (media.coverImage.extraLarge) {
     lines.push(`image: "${media.coverImage.extraLarge}"`);
-  } else {
-    lines.push('# image: # edit manual');
   }
 
   if (media.banner) {
     lines.push(`banner: "${media.banner}"`);
-  } else {
-    lines.push('# banner: # edit manual');
   }
 
   if (media.trailer) {
     lines.push(`trailer: "${media.trailer}"`);
-  } else {
-    lines.push('# trailer: # edit manual');
   }
   lines.push('');
 
@@ -330,7 +308,7 @@ export function buildActorFiles(
 
 export interface BuildAllInput {
   slug: string;
-  media: AniListMedia;
+  media: import('../types').AniListMedia;
   malId: number | null;
   kitsuId: string | null;
   synopsis: string;
