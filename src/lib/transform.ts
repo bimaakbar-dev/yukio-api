@@ -75,10 +75,12 @@ export interface MarkdownInput {
   malId: number | null;
   kitsuId: string | null;
   synopsis: string;
+  addedAt: string;
+  updatedAt: string;
 }
 
 export function buildMarkdown(input: MarkdownInput): string {
-  const { media, malId, kitsuId, synopsis } = input;
+  const { media, malId, kitsuId, synopsis, addedAt, updatedAt } = input;
   const lines: string[] = [];
 
   lines.push('---');
@@ -181,6 +183,10 @@ export function buildMarkdown(input: MarkdownInput): string {
   if (media.trailer) {
     lines.push(`trailer: "${media.trailer}"`);
   }
+  lines.push('');
+
+  lines.push(`addedAt: "${addedAt}"`);
+  lines.push(`updatedAt: "${updatedAt}"`);
   lines.push('');
 
   lines.push('draft: false');
@@ -316,6 +322,8 @@ export interface BuildAllInput {
   episodes: UnifiedEpisode[];
   relations: UnifiedRelation[];
   voiceActors: UnifiedVoiceActor[];
+  addedAt: string;
+  updatedAt: string;
 }
 
 export interface BuildAllResult {
@@ -335,9 +343,18 @@ export function buildAll(input: BuildAllInput): BuildAllResult {
     episodes,
     relations,
     voiceActors,
+    addedAt,
+    updatedAt,
   } = input;
 
-  const markdown = buildMarkdown({ media, malId, kitsuId, synopsis });
+  const markdown = buildMarkdown({
+    media,
+    malId,
+    kitsuId,
+    synopsis,
+    addedAt,
+    updatedAt,
+  });
 
   const animeFiles: FileToCommit[] = [];
 
