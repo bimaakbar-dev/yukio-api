@@ -1,6 +1,6 @@
 === REPO DUMP ===
-Generated: Thu Oct  8 13:17:41 UTC 2026
-Commit: c7bfdef
+Generated: Sat Oct 10 04:39:32 UTC 2026
+Commit: 6a48593
 
 === STRUCTURE ===
 .
@@ -436,6 +436,7 @@ import {
 const REFILL_THRESHOLD = 100;
 const DEFAULT_MAX_EPISODES = 100;
 const DEFAULT_MAX_CHARACTERS = 100;
+const RACE_MAX_RETRY = 5;
 
 function stripHtml(s: string): string {
   return s
@@ -450,6 +451,41 @@ function stripHtml(s: string): string {
     .replace(/&#0?39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomDelay(baseMs: number): number {
+  return baseMs + Math.floor(Math.random() * 2000);
+}
+
+async function commitWithRetry(
+  env: Env,
+  files: FileToCommit[],
+  message: string
+): Promise<{ ok: boolean; error?: string }> {
+  let lastError = '';
+
+  for (let attempt = 0; attempt < RACE_MAX_RETRY; attempt++) {
+    const result = await githubCommitMultipleFiles(env, files, message);
+
+    if (result.ok) {
+      return { ok: true };
+    }
+
+    lastError = result.error ?? 'unknown';
+
+    if (!lastError.includes('RACE_CONDITION')) {
+      return { ok: false, error: lastError };
+    }
+
+    const delay = randomDelay(1000 + attempt * 500);
+    await sleep(delay);
+  }
+
+  return { ok: false, error: lastError };
 }
 
 async function refillQueue(env: Env): Promise<number> {
@@ -532,11 +568,9 @@ async function scrapeOne(
     ...built.animeFiles,
   ];
 
-  const result = await githubCommitMultipleFiles(
-    env,
-    files,
-    `feat(${slug}): scrape from AniList`
-  );
+  const commitMsg = `feat(${slug}): scrape from AniList`;
+
+  const result = await commitWithRetry(env, files, commitMsg);
 
   if (!result.ok) {
     return {
@@ -614,11 +648,8 @@ async function mergeActorFiles(
 
   if (files.length === 0) return { ok: true, files: 0 };
 
-  const r = await githubCommitMultipleFiles(
-    env,
-    files,
-    `chore(actors): update ${files.length} file(s)`
-  );
+  const commitMsg = `chore(actors): update ${files.length} file(s)`;
+  const r = await commitWithRetry(env, files, commitMsg);
 
   return r.ok ? { ok: true, files: files.length } : { ok: false, files: 0, error: r.error };
 }
@@ -699,13 +730,16 @@ export async function runScrapeCron(env: Env): Promise<CronRunResult> {
 
   return result;
 }
-
 ===== END FILE =====
 
 ===== FILE: ./src/index.ts =====
 import type { Env } from './types';
 import { runScrapeCron } from './handlers/cron';
-import { getQueueStats, resetPermanentFailed } from './lib/state';
+import {
+  getQueueStats,
+  resetPermanentFailed,
+  getFailedItems,
+} from './lib/state';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -723,6 +757,15 @@ export default {
     if (url.pathname === '/stats') {
       const stats = await getQueueStats(env);
       return Response.json(stats);
+    }
+
+    if (url.pathname === '/errors') {
+      const limit = Math.min(
+        parseInt(url.searchParams.get('limit') ?? '50', 10),
+        200
+      );
+      const items = await getFailedItems(env, limit);
+      return Response.json({ total: items.length, items });
     }
 
     if (url.pathname === '/run') {
@@ -990,7 +1033,14 @@ export async function githubCommitMultipleFiles(
       headers: { ...h, 'Content-Type': 'application/json' },
       body: JSON.stringify({ sha: newCommitData.sha, force: false }),
     });
-    if (!updateRes.ok) return { ok: false, error: `Update ref failed: HTTP ${updateRes.status}` };
+
+    if (updateRes.status === 422) {
+      return { ok: false, error: 'RACE_CONDITION: head moved, retry' };
+    }
+
+    if (!updateRes.ok) {
+      return { ok: false, error: `Update ref failed: HTTP ${updateRes.status}` };
+    }
 
     return {
       ok: true,
@@ -1038,7 +1088,7 @@ async function fetchTimeout(
 }
 
 function slugify(s: string): string {
-  return s
+  return String(s ?? '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -1050,11 +1100,10 @@ function slugify(s: string): string {
 
 export { slugify };
 
-/* ============================================================
-   ANILIST GRAPHQL - via proxy Val Town
-   ============================================================ */
-
-async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
+async function gql<T>(
+  query: string,
+  variables: Record<string, unknown>
+): Promise<T | null> {
   try {
     const res = await fetchTimeout(ANILIST_PROXY, {
       method: 'POST',
@@ -1079,10 +1128,6 @@ async function gql<T>(query: string, variables: Record<string, unknown>): Promis
     return null;
   }
 }
-
-/* ============================================================
-   ANILIST - TOP LIST (untuk queue)
-   ============================================================ */
 
 const SORT_MAP: Record<string, string> = {
   popular: 'POPULARITY_DESC',
@@ -1116,10 +1161,6 @@ export async function fetchAniListTop(
 
   return data?.Page?.media ?? [];
 }
-
-/* ============================================================
-   ANILIST - METADATA (by ID)
-   ============================================================ */
 
 interface AniListMediaRaw {
   id: number;
@@ -1199,7 +1240,9 @@ function mapAniListSource(raw: string | null | undefined): string | null {
   return map[lower] ?? null;
 }
 
-export async function fetchAniListById(id: number): Promise<AniListMedia | null> {
+export async function fetchAniListById(
+  id: number
+): Promise<AniListMedia | null> {
   const query = `
     query ($id: Int) {
       Media(id: $id, type: ANIME) {
@@ -1278,10 +1321,6 @@ export async function fetchAniListById(id: number): Promise<AniListMedia | null>
     source: mapAniListSource(m.source),
   };
 }
-
-/* ============================================================
-   ANILIST - CHARACTERS
-   ============================================================ */
 
 interface AniListCharEdge {
   role: string;
@@ -1429,10 +1468,6 @@ export async function fetchCharactersFromAniList(
   return { characters, voiceActors };
 }
 
-/* ============================================================
-   SHIKIMORI - RELATIONS
-   ============================================================ */
-
 interface ShikimoriRelated {
   relation?: string;
   anime?: { id: number; name: string } | null;
@@ -1496,10 +1531,6 @@ export async function fetchRelationsFromShikimori(
     return null;
   }
 }
-
-/* ============================================================
-   KITSU - EPISODES
-   ============================================================ */
 
 interface KitsuAnimeRaw {
   id: string;
@@ -1650,10 +1681,6 @@ import type { Env, ScrapeQueueRow } from '../types';
 
 const IN_PROGRESS_STALE_MS = 10 * 60 * 1000;
 
-/* ============================================================
-   META
-   ============================================================ */
-
 export async function getMeta(env: Env, key: string): Promise<string | null> {
   const row = await env.DB
     .prepare('SELECT value FROM scrape_meta WHERE key = ?')
@@ -1679,10 +1706,6 @@ export async function setMeta(
     .bind(key, value, Date.now())
     .run();
 }
-
-/* ============================================================
-   QUEUE — INSERT (refill)
-   ============================================================ */
 
 export interface QueueInsertItem {
   anilistId: number;
@@ -1712,10 +1735,6 @@ export async function insertQueue(
 
   return items.length;
 }
-
-/* ============================================================
-   QUEUE — AMBIL NEXT
-   ============================================================ */
 
 export async function getQueuePendingCount(env: Env): Promise<number> {
   const row = await env.DB
@@ -1797,20 +1816,12 @@ export async function markQueueInProgress(
   return (res.meta?.changes ?? 0) > 0;
 }
 
-/* ============================================================
-   QUEUE — HAPUS (sukses)
-   ============================================================ */
-
 export async function deleteQueueItem(env: Env, id: number): Promise<void> {
   await env.DB
     .prepare('DELETE FROM scrape_queue WHERE id = ?')
     .bind(id)
     .run();
 }
-
-/* ============================================================
-   QUEUE — MARK FAILED
-   ============================================================ */
 
 export async function markQueueFailed(
   env: Env,
@@ -1831,10 +1842,6 @@ export async function markQueueFailed(
     .bind(truncated, now, id)
     .run();
 }
-
-/* ============================================================
-   STATS
-   ============================================================ */
 
 export interface QueueStats {
   total: number;
@@ -1888,10 +1895,6 @@ export async function getQueueStats(env: Env): Promise<QueueStats> {
   };
 }
 
-/* ============================================================
-   RESET — untuk admin manual
-   ============================================================ */
-
 export async function resetPermanentFailed(env: Env): Promise<number> {
   const res = await env.DB
     .prepare(
@@ -1907,11 +1910,37 @@ export async function resetPermanentFailed(env: Env): Promise<number> {
 
   return res.meta?.changes ?? 0;
 }
+
+export interface FailedItem {
+  id: number;
+  slug: string;
+  title: string;
+  attempt_count: number;
+  last_error: string | null;
+  updated_at: number;
+}
+
+export async function getFailedItems(
+  env: Env,
+  limit = 50
+): Promise<FailedItem[]> {
+  const res = await env.DB
+    .prepare(
+      `SELECT id, slug, title, attempt_count, last_error, updated_at
+       FROM scrape_queue
+       WHERE status = 'failed'
+       ORDER BY updated_at DESC
+       LIMIT ?`
+    )
+    .bind(limit)
+    .all<FailedItem>();
+
+  return res.results ?? [];
+}
 ===== END FILE =====
 
 ===== FILE: ./src/lib/transform.ts =====
 import type {
-  AniListMedia,
   UnifiedCharacter,
   UnifiedEpisode,
   UnifiedRelation,
@@ -1924,7 +1953,7 @@ const EP_CHUNK_SIZE = 12;
 const MAX_ACTORS_PER_FILE = 500;
 
 function yamlString(s: string): string {
-  const cleaned = s.replace(/\n/g, ' ').trim();
+  const cleaned = String(s ?? '').replace(/\n/g, ' ').trim();
   const needsQuote =
     /[:#&*!|>'"%@`{}\[\],]/.test(cleaned) ||
     cleaned === '' ||
@@ -1934,7 +1963,7 @@ function yamlString(s: string): string {
 }
 
 function slugify(s: string): string {
-  return s
+  return String(s ?? '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -1984,7 +2013,7 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 export interface MarkdownInput {
-  media: AniListMedia;
+  media: import('../types').AniListMedia;
   malId: number | null;
   kitsuId: string | null;
   synopsis: string;
@@ -2007,13 +2036,9 @@ export function buildMarkdown(input: MarkdownInput): string {
   const effectiveMalId = malId ?? media.myanimelistId ?? null;
   if (effectiveMalId) {
     lines.push(`malId: ${effectiveMalId}`);
-  } else {
-    lines.push('# malId: # edit manual');
   }
   if (kitsuId) {
     lines.push(`kitsuId: ${yamlString(kitsuId)}`);
-  } else {
-    lines.push('# kitsuId: # edit manual');
   }
   lines.push('');
 
@@ -2022,8 +2047,6 @@ export function buildMarkdown(input: MarkdownInput): string {
 
   if (media.source) {
     lines.push(`source: ${media.source}`);
-  } else {
-    lines.push('# source: # edit manual');
   }
   lines.push('');
 
@@ -2034,14 +2057,10 @@ export function buildMarkdown(input: MarkdownInput): string {
 
   if (media.duration && media.duration > 0) {
     lines.push(`duration: ${media.duration}`);
-  } else {
-    lines.push('# duration: # edit manual');
   }
 
   if (media.rating) {
     lines.push(`rating: ${media.rating}`);
-  } else {
-    lines.push('# rating: # edit manual');
   }
   lines.push('');
 
@@ -2056,27 +2075,22 @@ export function buildMarkdown(input: MarkdownInput): string {
     media.endDate?.day ?? null
   );
 
-  lines.push('aired:');
-  if (airedFrom) {
-    lines.push(`  from: "${airedFrom}"`);
-  } else {
-    lines.push('  # from: # edit manual');
+  if (airedFrom || airedTo) {
+    lines.push('aired:');
+    if (airedFrom) {
+      lines.push(`  from: "${airedFrom}"`);
+    }
+    if (airedTo) {
+      lines.push(`  to: "${airedTo}"`);
+    }
+    lines.push('');
   }
-  if (airedTo) {
-    lines.push(`  to: "${airedTo}"`);
-  } else {
-    lines.push('  # to: # edit manual');
-  }
-  lines.push('');
 
-  lines.push('stats:');
   if (media.averageScore && media.averageScore > 0) {
+    lines.push('stats:');
     lines.push(`  score: ${(media.averageScore / 10).toFixed(1)}`);
-  } else {
-    lines.push('  # score: # edit manual');
+    lines.push('');
   }
-  lines.push('  # scoredBy: # edit manual');
-  lines.push('');
 
   const genres = (media.genres ?? []).map(slugify).filter(Boolean);
   if (genres.length > 0) {
@@ -2100,20 +2114,14 @@ export function buildMarkdown(input: MarkdownInput): string {
 
   if (media.coverImage.extraLarge) {
     lines.push(`image: "${media.coverImage.extraLarge}"`);
-  } else {
-    lines.push('# image: # edit manual');
   }
 
   if (media.banner) {
     lines.push(`banner: "${media.banner}"`);
-  } else {
-    lines.push('# banner: # edit manual');
   }
 
   if (media.trailer) {
     lines.push(`trailer: "${media.trailer}"`);
-  } else {
-    lines.push('# trailer: # edit manual');
   }
   lines.push('');
 
@@ -2242,7 +2250,7 @@ export function buildActorFiles(
 
 export interface BuildAllInput {
   slug: string;
-  media: AniListMedia;
+  media: import('../types').AniListMedia;
   malId: number | null;
   kitsuId: string | null;
   synopsis: string;
