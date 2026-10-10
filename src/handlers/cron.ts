@@ -117,6 +117,30 @@ interface ScrapeResult {
   voiceActors: UnifiedVoiceActor[];
 }
 
+async function readExistingAddedAt(
+  env: Env,
+  slug: string
+): Promise<string | null> {
+  try {
+    const existing = await githubGetFile(
+      env,
+      `src/content/anime/${slug}.md`
+    );
+    if (!existing) return null;
+
+    const m = existing.content.match(
+      /^\s*addedAt:\s*"?([^"\n\r]+?)"?\s*$/m
+    );
+    if (m && m[1]) {
+      const v = m[1].trim();
+      if (v) return v;
+    }
+  } catch {
+    // ignore, akan fallback ke now
+  }
+  return null;
+}
+
 async function scrapeOne(
   env: Env,
   slug: string,
@@ -134,11 +158,16 @@ async function scrapeOne(
   const maxChars = parseInt(env.MAX_CHARACTERS ?? String(DEFAULT_MAX_CHARACTERS), 10);
   const maxEps = parseInt(env.MAX_EPISODES ?? String(DEFAULT_MAX_EPISODES), 10);
 
-  const [chars, rels, eps] = await Promise.all([
+  const [chars, rels, eps, preservedAddedAt] = await Promise.all([
     malId ? fetchCharactersFromAniList(malId, maxChars).catch(() => null) : null,
     malId ? fetchRelationsFromShikimori(malId).catch(() => null) : null,
     kitsuId ? fetchEpisodesFromKitsu(kitsuId, maxEps).catch(() => null) : null,
+    readExistingAddedAt(env, slug),
   ]);
+
+  const nowISO = new Date().toISOString();
+  const addedAt = preservedAddedAt ?? nowISO;
+  const updatedAt = nowISO;
 
   const built = buildAll({
     slug,
@@ -150,6 +179,8 @@ async function scrapeOne(
     episodes: eps ?? [],
     relations: rels ?? [],
     voiceActors: chars?.voiceActors ?? [],
+    addedAt,
+    updatedAt,
   });
 
   const files: FileToCommit[] = [
