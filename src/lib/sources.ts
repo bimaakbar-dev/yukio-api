@@ -475,6 +475,40 @@ export async function fetchRelationsFromShikimori(
   }
 }
 
+interface ShikimoriAnime {
+  id: number;
+  rating?: string | null;
+}
+
+export async function fetchRatingFromShikimori(
+  malId: number
+): Promise<string | null> {
+  try {
+    const res = await fetchTimeout(`${SHIKIMORI_BASE}/${malId}`, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'yukio-api/2.0',
+      },
+    });
+
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as ShikimoriAnime;
+    const raw = (data.rating ?? '').toLowerCase().trim();
+    const map: Record<string, string> = {
+      g: 'G',
+      pg: 'PG',
+      pg_13: 'PG-13',
+      r: 'R',
+      r_plus: 'R+',
+      rx: 'Rx',
+    };
+    return map[raw] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 interface KitsuAnimeRaw {
   id: string;
 }
