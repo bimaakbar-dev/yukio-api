@@ -5,6 +5,11 @@ import {
   resetPermanentFailed,
   getFailedItems,
 } from './lib/state';
+import {
+  runRatingTick,
+  resetRatingPatch,
+  getRatingPatchStatus,
+} from './handlers/patch';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -48,6 +53,33 @@ export default {
     if (url.pathname === '/reset-failed') {
       const reset = await resetPermanentFailed(env);
       return Response.json({ ok: true, reset });
+    }
+
+    if (url.pathname === '/admin/patch-rating-tick' || url.pathname === '/patch') {
+      const batch = Math.min(
+        100,
+        Math.max(1, parseInt(url.searchParams.get('batch') ?? '50', 10))
+      );
+
+      try {
+        const result = await runRatingTick(env, batch);
+        return Response.json({ ok: true, result });
+      } catch (err) {
+        return Response.json(
+          { ok: false, error: (err as Error).message },
+          { status: 500 }
+        );
+      }
+    }
+
+    if (url.pathname === '/admin/patch-rating-reset' || url.pathname === '/patch-reset') {
+      await resetRatingPatch(env);
+      return Response.json({ ok: true, reset: true });
+    }
+
+    if (url.pathname === '/admin/patch-rating-status' || url.pathname === '/patch-status') {
+      const status = await getRatingPatchStatus(env);
+      return Response.json({ ok: true, ...status });
     }
 
     return new Response('Not Found', { status: 404 });
