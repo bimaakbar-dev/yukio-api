@@ -8,6 +8,9 @@ export interface Env {
   YUKIO_DATA_REPO: string;
   YUKIO_DATA_BRANCH: string;
 
+  PATCH_SHARD: string;
+  PATCH_TOTAL_SHARDS: string;
+
   INCREMENTAL: string;
   ANILIST_SORT: string;
   MAX_EPISODES: string;
